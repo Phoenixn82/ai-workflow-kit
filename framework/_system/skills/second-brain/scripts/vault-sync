@@ -1,0 +1,360 @@
+#!/usr/bin/env bash
+# Batch B0 (audit 2026-10-12): a Claude-spawned child run (cx sets CLAUDE_SPAWN=1) must not pay the
+# human-session ritual: no vault sync, no boot block, no handoff seal. The parent reads its output file.
+[[ "${CLAUDE_SPAWN:-}" == "1" ]] && exit 0
+# vault-sync is the only git replication worker for the live markdown vault.
+# It locks only sibling workers; writers such as Obsidian are never paused.
+# Pulls fetch into git metadata and rebase solely in a detached .sync worktree.
+# The live checkout receives per-file updates only when its last-synced blob remains.
+# Concurrent local edits win and get an incoming .conflict-<host>-<utc> copy.
+# Rebase conflicts keep the replayed local side and preserve origin's side likewise.
+# State is a JSON map of manifest file paths to the last accepted remote blob sha.
+# The manifest is the sole staging authority; all glob pathspecs are root-only.
+# Before every commit, index blobs are stability-checked and scanned from the index.
+# Python is used only for JSON and denylist work so jq is never a dependency.
+# Every run appends a compact UTC log line and old logs rotate at 500 lines.
+# Failures write .sync/flag, leave working files intact, and always return 1.
+# Clean skips, HALT, lock contention, and successful commands return 0, never 2.
+# Fetching an existing remote without a main branch is a clean nothing-to-integrate case.
+# A soft unstable-file skip retains its flag but permits other stable work to push.
+# Paths with newlines are unsupported by the manifest's one-path-per-line format.
+# Conflict filenames use the one run timestamp; collisions acquire a numeric suffix.
+# The worktree may be pruned and recreated if Git reports it broken or missing.
+# No command here pushes anything except the explicitly requested push subcommand.
+# This script resolves vault-scan.py beside itself before the installed fallback.
+set -euo pipefail
+
+die() { printf 'vault-sync: %s\n' "$*" >&2; exit 1; }
+is_glob() { case "$1" in *[\*\?\[]*) return 0 ;; *) return 1 ;; esac; }
+utc_now() { date -u +%Y-%m-%dT%H:%M:%SZ; }
+
+repo_from_args() {
+  local explicit="${1:-}" candidate=""
+  if [[ -n "$explicit" ]]; then candidate="$explicit"
+  elif [[ -n "${VAULT_SYNC_REPO:-}" ]]; then candidate="$VAULT_SYNC_REPO"
+  elif [[ -f "$HOME/.config/vault-sync/repo" ]]; then IFS= read -r candidate < "$HOME/.config/vault-sync/repo" || true
+  else candidate="$HOME/AI_Projects/_system/second-brain"; fi
+  [[ -d "$candidate" ]] || die "repo not found: $candidate"
+  (cd "$candidate" && pwd -P)
+}
+
+arg_repo=""; command_name=""
+while (($#)); do
+  case "$1" in
+    --repo) (($# >= 2)) || die '--repo requires a path'; arg_repo="$2"; shift 2 ;;
+    pull|push|status) [[ -z "$command_name" ]] || die 'one command is required'; command_name="$1"; shift ;;
+    *) die "unknown argument: $1" ;;
+  esac
+done
+[[ -n "$command_name" ]] || die 'usage: vault-sync [--repo PATH] pull|push|status'
+repo="$(repo_from_args "$arg_repo")"
+git -C "$repo" rev-parse --git-dir >/dev/null 2>&1 || die "not a git repo: $repo"
+
+sync_dir="$repo/.sync"; mkdir -p "$sync_dir"
+exec {lock_fd}>"$sync_dir/lock"
+if ! flock -w 4 "$lock_fd"; then
+  printf 'vault-sync: another sync is running, skipped\n' >&2
+  exit 0
+fi
+
+host="${VAULT_SYNC_HOST:-$(hostname -s | tr '[:upper:]' '[:lower:]')}"
+run_utc="$(utc_now)"
+run_stamp="$(date -u +%Y%m%dT%H%M%SZ)"
+flag_file="$sync_dir/flag"; state_file="$sync_dir/state.json"; log_file="$sync_dir/log"
+last_failure=""
+
+write_log() {
+  local result="$1" details="$2"
+  if [[ -f "$log_file" ]] && (( $(wc -l < "$log_file") >= 500 )); then mv -f "$log_file" "$sync_dir/log.1"; fi
+  printf '%s %s %s %s %s\n' "$run_utc" "$host" "$command_name" "$result" "$details" >> "$log_file"
+  # One silent Telegram ping per failure streak; a pushed run ends the streak.
+  # Pull runs clear the flag between pushes, so the streak lives in its own marker.
+  local alerted="$sync_dir/alerted"
+  if [[ "$result" == failed && ! -e "$alerted" ]]; then
+    : > "$alerted"
+    [[ -n "${VAULT_SYNC_NO_ALERT:-}" ]] || timeout 20 tg fleet "vault-sync $command_name failing on $host since $run_utc: $details (one alert per streak; log: $log_file)" >/dev/null 2>&1 || true
+  elif [[ "$result" == ok && "$command_name" == push ]]; then rm -f -- "$alerted"; fi
+}
+set_flag() { last_failure="$1"; printf 'sync-blocked %s %s: %s\n' "$run_utc" "$host" "$1" > "$flag_file"; }
+clear_flag() { rm -f -- "$flag_file"; }
+print_flag() {
+  local line ts rest
+  line="$(head -n 1 "$flag_file" 2>/dev/null || true)"
+  if [[ "$line" =~ ^sync-blocked[[:space:]]+([^[:space:]]+)[[:space:]]+[^:]+:[[:space:]]*(.*)$ ]]; then
+    ts="${BASH_REMATCH[1]}"; rest="${BASH_REMATCH[2]}"
+    printf 'vault-sync: sync-blocked since %s: %s\n' "$ts" "$rest" >&2
+  elif [[ -n "$line" ]]; then printf 'vault-sync: %s\n' "$line" >&2; fi
+}
+
+if [[ -e "$sync_dir/HALT" ]]; then
+  printf 'vault-sync: HALT present, doing nothing\n' >&2
+  write_log 'skipped' 'HALT-present'
+  exit 0
+fi
+
+declare -a manifest_raw=() manifest_git=() changed_paths=() conflict_paths=() conflict_copies=()
+load_manifest() {
+  local line git_spec
+  [[ -f "$repo/sync-manifest.txt" ]] || { set_flag 'missing sync-manifest.txt'; return 1; }
+  manifest_raw=(); manifest_git=()
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    line="${line%$'\r'}"
+    [[ "$line" =~ ^[[:space:]]*$ || "$line" =~ ^[[:space:]]*# ]] && continue
+    manifest_raw+=("$line")
+    if is_glob "$line"; then git_spec=":(top,glob)$line"; else git_spec="$line"; fi
+    manifest_git+=("$git_spec")
+  done < "$repo/sync-manifest.txt"
+  ((${#manifest_raw[@]})) || { set_flag 'empty sync-manifest.txt'; return 1; }
+}
+path_in_manifest() {
+  local path="$1" spec root
+  for spec in "${manifest_raw[@]}"; do
+    if [[ "$spec" == */ ]]; then root="${spec%/}"; [[ "$path" == "$root/"* ]] && return 0
+    elif is_glob "$spec"; then [[ "$path" != */* && "$path" == $spec ]] && return 0
+    elif [[ "$path" == "$spec" ]]; then return 0; fi
+  done
+  return 1
+}
+stage_manifest() {
+  local i raw spec found
+  declare -a stage_specs=()
+  for i in "${!manifest_raw[@]}"; do
+    raw="${manifest_raw[$i]}"; spec="${manifest_git[$i]}"; found=0
+    [[ -e "$repo/${raw%/}" || -L "$repo/${raw%/}" ]] && found=1
+    git -C "$repo" ls-files --error-unmatch -- "$spec" >/dev/null 2>&1 && found=1 || true
+    if is_glob "$raw" && compgen -G "$repo/$raw" >/dev/null; then found=1; fi
+    if ((found)); then stage_specs+=("$spec"); fi
+  done
+  if ((${#stage_specs[@]})); then git -C "$repo" add -A -- "${stage_specs[@]}"; fi
+}
+# -q --verify: a missing path must yield EMPTY (plain rev-parse echoes the unparsed "rev:path" and broke deletions, found 2026-09-04)
+blob_at() { git -C "$repo" rev-parse -q --verify "$1:$2" 2>/dev/null || true; }
+state_blob() {
+  python3 - "$state_file" "$1" <<'PY'
+import json, sys
+try:
+    with open(sys.argv[1], encoding="utf-8") as f: print(json.load(f).get(sys.argv[2], ""))
+except (OSError, ValueError): print("")
+PY
+}
+update_state() {
+  local revision="$1" tree_dump
+  tree_dump="$(mktemp)"
+  git -C "$repo" ls-tree -r -z "$revision" > "$tree_dump"
+  python3 - "$state_file" "$tree_dump" <<'PY'
+import json, os, sys
+out = {}
+with open(sys.argv[2], 'rb') as source: data = source.read()
+for entry in data.split(b'\0'):
+    if not entry: continue
+    meta, path = entry.split(b'\t', 1)
+    fields = meta.split()
+    if len(fields) >= 3: out[path.decode('utf-8', 'surrogateescape')] = fields[2].decode()
+target = sys.argv[1]; tmp = target + '.tmp'
+with open(tmp, 'w', encoding='utf-8') as f: json.dump(out, f, sort_keys=True); f.write('\n')
+os.replace(tmp, target)
+PY
+  rm -f "$tree_dump"
+}
+conflict_for() {
+  local path="$1" stem ext candidate n=1
+  if [[ "$path" == *.* ]]; then stem="${path%.*}"; ext=".${path##*.}"; else stem="$path"; ext=""; fi
+  candidate="$stem.conflict-$host-$run_stamp$ext"
+  while [[ -e "$repo/$candidate" || -e "$sync_dir/worktree/$candidate" ]]; do candidate="$stem.conflict-$host-$run_stamp-$n$ext"; ((++n)); done
+  printf '%s\n' "$candidate"
+}
+record_conflict() {
+  local path="$1" copy="$2" i
+  for i in "${!conflict_paths[@]}"; do [[ "${conflict_paths[$i]}" == "$path" && "${conflict_copies[$i]}" == "$copy" ]] && return; done
+  conflict_paths+=("$path"); conflict_copies+=("$copy")
+}
+append_conflicts() {
+  local session="$repo/session-state.md" i path copy
+  ((${#conflict_paths[@]})) || return 0
+  touch "$session"
+  grep -qxF '## UNRESOLVED CONFLICTS' "$session" || printf '\n## UNRESOLVED CONFLICTS\n' >> "$session"
+  for i in "${!conflict_paths[@]}"; do
+    path="${conflict_paths[$i]}"; copy="${conflict_copies[$i]}"
+    printf -- '- %s %s: `%s` kept; incoming version at `%s`\n' "$run_utc" "$host" "$path" "$copy" >> "$session"
+    printf 'vault-sync: conflict: %s kept; incoming version at %s\n' "$path" "$copy" >&2
+  done
+}
+rebase_active() {
+  local d; d="$(git -C "$1" rev-parse --git-path rebase-merge)"; [[ -d "$d" ]] || { d="$(git -C "$1" rev-parse --git-path rebase-apply)"; [[ -d "$d" ]]; }
+}
+ensure_worktree() {
+  local wt="$sync_dir/worktree"
+  if [[ -d "$wt" ]] && git -C "$wt" rev-parse --is-inside-work-tree >/dev/null 2>&1; then return 0; fi
+  git -C "$repo" worktree prune
+  [[ -e "$wt" ]] && rm -rf -- "$wt"
+  git -C "$repo" worktree add --detach "$wt" main >/dev/null 2>&1
+}
+rebase_local_on_origin() {
+  local wt="$sync_dir/worktree" err path copy
+  git -C "$wt" reset -q --hard >/dev/null 2>&1 || true; git -C "$wt" clean -fdq >/dev/null 2>&1 || true
+  if git -C "$wt" checkout --detach main >/dev/null 2>&1 && GIT_EDITOR=true git -C "$wt" rebase origin/main >/dev/null 2>&1; then return 0; fi
+  local guard=0
+  while rebase_active "$wt"; do
+    if ((++guard > 50)); then git -C "$wt" rebase --abort; set_flag 'rebase failed: conflict loop exceeded 50 rounds'; return 1; fi
+    mapfile -t rebase_paths < <(git -C "$wt" diff --name-only --diff-filter=U)
+    if ((${#rebase_paths[@]} == 0)); then git -C "$wt" rebase --abort; set_flag 'rebase failed: no conflicted paths'; return 1; fi
+    for path in "${rebase_paths[@]}"; do
+      copy="$(conflict_for "$path")"
+      git -C "$wt" checkout --theirs -- "$path" >/dev/null 2>&1 || true
+      if git -C "$repo" cat-file -e "origin/main:$path" 2>/dev/null; then
+        mkdir -p "$(dirname "$wt/$copy")"; git -C "$repo" show "origin/main:$path" > "$wt/$copy"
+        git -C "$wt" add -A -- "$copy" >/dev/null 2>&1 || true
+      fi
+      if [[ -e "$wt/$path" ]]; then git -C "$wt" add -A -- "$path" >/dev/null 2>&1 || true
+      else git -C "$wt" rm -q --cached -- "$path" >/dev/null 2>&1 || true; fi
+      record_conflict "$path" "$copy"
+    done
+    if ! GIT_EDITOR=true git -C "$wt" rebase --continue >/dev/null 2>&1 && ! rebase_active "$wt"; then
+      set_flag 'rebase failed: rebase --continue'; return 1
+    fi
+  done
+  return 0
+}
+fetch_origin() {
+  local timeout_s="$1" capture line
+  git -C "$repo" remote get-url origin >/dev/null 2>&1 || { set_flag 'no remote'; return 1; }
+  capture="$(mktemp)"
+  if ! timeout "$timeout_s" git -C "$repo" fetch --quiet origin main 2>"$capture"; then
+    line="$(head -n 1 "$capture" || true)"; rm -f "$capture"
+    if [[ "$line" == *"couldn't find remote ref main"* || "$line" == *"not our ref"* ]]; then return 2; fi
+    set_flag "fetch failed: ${line:-timeout or unknown fetch error}"; return 1
+  fi
+  rm -f "$capture"
+  git -C "$repo" rev-parse -q --verify refs/remotes/origin/main >/dev/null 2>&1 || return 2
+  return 0
+}
+apply_changed_paths() {
+  local old="$1" new="$2" path last new_blob live_blob copy
+  for path in "${changed_paths[@]}"; do
+    last="$(state_blob "$path")"; [[ -n "$last" ]] || last="$(blob_at "$old" "$path")"
+    new_blob="$(blob_at "$new" "$path")"
+    if [[ ! -e "$repo/$path" && ! -L "$repo/$path" ]]; then
+      [[ -n "$new_blob" ]] && git -C "$repo" checkout -q "$new" -- "$path"
+    else
+      live_blob="$(git -C "$repo" hash-object -- "$path")"
+      if [[ "$live_blob" == "$last" ]]; then
+        if [[ -n "$new_blob" ]]; then git -C "$repo" checkout -q "$new" -- "$path"; else rm -f -- "$repo/$path"; fi
+      else
+        copy="$(conflict_for "$path")"; record_conflict "$path" "$copy"
+        if [[ -n "$new_blob" ]]; then mkdir -p "$(dirname "$repo/$copy")"; git -C "$repo" show "$new:$path" > "$repo/$copy"; fi
+      fi
+    fi
+  done
+}
+integrate() {
+  local timeout_s="$1" old new remote
+  changed_paths=()
+  fetch_origin "$timeout_s" || {
+    local fetch_rc=$?
+    [[ $fetch_rc -eq 2 ]] && { integrate_result='no-main'; integrate_files=0; return 0; }
+    return 1
+  }
+  old="$(git -C "$repo" rev-parse refs/heads/main)"; remote="$(git -C "$repo" rev-parse refs/remotes/origin/main)"
+  if [[ "$old" == "$remote" ]]; then update_state "$remote"; integrate_result='up-to-date'; integrate_files=0; return 0; fi
+  if git -C "$repo" merge-base --is-ancestor "$old" "$remote"; then new="$remote"
+  else
+    ensure_worktree || { set_flag 'rebase failed: worktree setup'; return 1; }
+    rebase_local_on_origin || { rebase_active "$sync_dir/worktree" && git -C "$sync_dir/worktree" rebase --abort || true; return 1; }
+    new="$(git -C "$sync_dir/worktree" rev-parse HEAD)"
+  fi
+  mapfile -d '' -t changed_paths < <(git -C "$repo" diff --name-only --no-renames -z "$old" "$new")
+  git -C "$repo" update-ref refs/heads/main "$new" "$old"
+  git -C "$repo" reset -q --mixed "$new"
+  apply_changed_paths "$old" "$new"
+  update_state "$new"; append_conflicts
+  integrate_result='integrated'; integrate_files="${#changed_paths[@]}"
+  return 0
+}
+# Keep ai-memory's index equal to the clone: after a pull/push that changed files, run the
+# import sweep detached (never inside the hook's time budget). Only for the configured real
+# repo, never for test fixtures, and only when the sweep script is installed.
+reindex_async() {
+  local sweep real
+  [[ -z "${VAULT_SYNC_NO_REINDEX:-}" ]] || return 0
+  # "real repo" = the configured one (config file) or the default path; NEVER the env/--repo
+  # value, otherwise test fixtures (which set VAULT_SYNC_REPO) would be swept into the index.
+  if [[ -f "$HOME/.config/vault-sync/repo" ]]; then IFS= read -r real < "$HOME/.config/vault-sync/repo" || real=""; else real="$HOME/AI_Projects/_system/second-brain"; fi
+  [[ -n "$real" && -d "$real" ]] || return 0
+  [[ "$repo" == "$(cd "$real" && pwd -P)" ]] || return 0
+  sweep="$(command -v vault-index-ai-memory.sh 2>/dev/null || true)"
+  [[ -n "$sweep" ]] || sweep="$HOME/.local/bin/vault-index-ai-memory.sh"
+  [[ -x "$sweep" ]] || return 0
+  local listfile="$sync_dir/reindex-paths.$$"
+  printf '%s\n' "$@" | grep -E '\.md$' > "$listfile" || true
+  [[ -s "$listfile" ]] || { rm -f "$listfile"; return 0; }
+  # the child MUST NOT inherit the flock fd, or the lock stays held for the whole sweep
+  ( exec {lock_fd}>&-; VAULT_SYNC_REPO="$repo" nohup "$sweep" vault --files "$listfile" >> "$sync_dir/reindex.log" 2>&1 & ) >/dev/null 2>&1
+  write_log 'ok' "reindex started in background ($(wc -l < "$listfile") paths)"
+}
+index_blob() { git -C "$repo" ls-files -s -- "$1" | awk 'NR==1 {print $2}'; }
+live_blob() { [[ -e "$repo/$1" || -L "$repo/$1" ]] && git -C "$repo" hash-object -- "$1" || true; }
+
+do_status() {
+  local head origin dirty=0 path line
+  load_manifest || { write_log 'failed' "$last_failure"; return 1; }
+  head="$(git -C "$repo" rev-parse --short HEAD 2>/dev/null || printf 'unborn')"
+  origin="$(git -C "$repo" rev-parse --short refs/remotes/origin/main 2>/dev/null || printf 'unknown')"
+  declare -A seen=()
+  while IFS= read -r -d '' path; do path="${path#?? }"; path_in_manifest "$path" && seen["$path"]=1; done < <(git -C "$repo" status --porcelain -z)
+  dirty="${#seen[@]}"
+  write_log 'ok' 'status'
+  printf 'host: %s\nrepo: %s\nHEAD: %s\norigin/main: %s\ndirty manifest files: %s\n' "$host" "$repo" "$head" "$origin" "$dirty"
+  [[ -f "$flag_file" ]] && printf 'flag: %s\n' "$(head -n 1 "$flag_file")"
+  printf 'last 3 log lines:\n'; tail -n 3 "$log_file" 2>/dev/null || true
+}
+do_pull() {
+  [[ -f "$flag_file" ]] && print_flag
+  if ! integrate 5; then write_log 'failed' "$last_failure"; return 1; fi
+  clear_flag
+  if [[ "$integrate_result" == no-main ]]; then write_log 'ok' 'nothing-to-integrate'; else write_log 'ok' "pulled ${integrate_files:-0} files, ${#conflict_paths[@]} conflicts"; fi
+  (( ${integrate_files:-0} > 0 )) && reindex_async "${changed_paths[@]}" || true
+}
+do_push() {
+  local path idx live scan_script scan_capture first soft=0 commit_msg push_capture
+  load_manifest || { write_log 'failed' "$last_failure"; return 1; }
+  stage_manifest
+  [[ -n "${VAULT_SYNC_TEST_HOOK_AFTER_STAGE:-}" ]] && (cd "$repo" && eval "$VAULT_SYNC_TEST_HOOK_AFTER_STAGE")
+  mapfile -d '' -t staged_paths < <(git -C "$repo" diff --cached --name-only -z)
+  for path in "${staged_paths[@]}"; do
+    if ! path_in_manifest "$path"; then git -C "$repo" reset -q; set_flag "manifest violation: $path"; write_log 'failed' "$last_failure"; return 1; fi
+  done
+  for path in "${staged_paths[@]}"; do
+    idx="$(index_blob "$path")"; live="$(live_blob "$path")"
+    if [[ "$idx" != "$live" ]]; then
+      git -C "$repo" add -A -- "$path"; idx="$(index_blob "$path")"; live="$(live_blob "$path")"
+      if [[ "$idx" != "$live" ]]; then git -C "$repo" reset -q -- "$path"; set_flag "unstable file skipped: $path"; soft=1; fi
+    fi
+  done
+  mapfile -d '' -t staged_paths < <(git -C "$repo" diff --cached --name-only -z)
+  if ((${#staged_paths[@]})); then
+    scan_script="$(dirname "${BASH_SOURCE[0]}")/vault-scan.py"; [[ -f "$scan_script" ]] || scan_script='$HOME/.local/bin/vault-scan.py'
+    scan_capture="$(mktemp)"
+    if ! python3 "$scan_script" "$repo" >/dev/null 2>"$scan_capture"; then
+      first="$(grep -m1 -v '^vault-scan: report ' "$scan_capture" || head -n 1 "$scan_capture" || true)"; cat "$scan_capture" >&2; rm -f "$scan_capture"  # report lines never block; name the line that did
+      git -C "$repo" reset -q; set_flag "scan blocked: ${first:-scanner failed}"; write_log 'failed' "$last_failure"; return 1
+    fi
+    cat "$scan_capture" >&2; rm -f "$scan_capture"
+    commit_msg="sync: $host $run_utc"
+    if ! git -C "$repo" commit -q -m "$commit_msg"; then set_flag 'commit failed'; write_log 'failed' "$last_failure"; return 1; fi
+  fi
+  if ! integrate 30; then write_log 'failed' "$last_failure"; return 1; fi
+  push_capture="$(mktemp)"
+  if ! timeout 30 git -C "$repo" push --quiet origin main 2>"$push_capture"; then
+    first="$(head -n 1 "$push_capture" || true)"; rm -f "$push_capture"; set_flag "push failed: ${first:-timeout or unknown push error}"; write_log 'failed' "$last_failure"; return 1
+  fi
+  rm -f "$push_capture"
+  ((soft)) || clear_flag
+  write_log 'ok' "pushed $(git -C "$repo" rev-parse --short main)"
+  { (( ${#staged_paths[@]} > 0 )) || (( ${integrate_files:-0} > 0 )); } && reindex_async "${staged_paths[@]}" "${changed_paths[@]}" || true
+}
+
+case "$command_name" in
+  status) do_status ;;
+  pull) do_pull ;;
+  push) do_push ;;
+esac

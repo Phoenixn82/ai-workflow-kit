@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# media-scan-watch: scan every finished file under the media folder with ClamAV the moment it lands.
+# Infected files are moved to MEDIA_DIR/.quarantine and logged (journalctl -t media-scan).
+# Partial downloads (incomplete/, *.part) are skipped; the nightly sweep (media-scan-sweep.timer) covers
+# anything missed. Needs: clamav-daemon (clamdscan) and inotify-tools.
+set -uo pipefail
+dir="${MEDIA_DIR:-/srv/media}"
+mkdir -p "$dir/.quarantine"
+inotifywait -m -r -q -e close_write -e moved_to --format '%w%f' \
+    --exclude '/\.quarantine/|/incomplete/|\.part$' "$dir" |
+while IFS= read -r f; do
+  [ -f "$f" ] || continue
+  out=$(clamdscan --fdpass --no-summary --move="$dir/.quarantine" "$f" 2>&1); rc=$?
+  [ $rc -eq 1 ] && { logger -t media-scan "INFECTED, moved to quarantine: $out"; [ -x /usr/local/bin/alert ] && /usr/local/bin/alert "media: infected file quarantined: $out"; }
+  [ $rc -ge 2 ] && logger -t media-scan "scan error: $out"
+done

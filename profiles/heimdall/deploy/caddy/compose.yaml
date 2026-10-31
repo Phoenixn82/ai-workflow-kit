@@ -1,0 +1,21 @@
+# ~/apps/caddy: one Caddy in front of every project that must be on the public internet (most should not:
+# tailscale-serve.sh keeps a project on your tailnet). Caddy gets and renews certificates by itself once the
+# domain's DNS points at your home address and the router forwards TCP 80 and 443 to heimdall.
+# Deploy it like a project, so systemd runs it:  cp -r profiles/heimdall/deploy/caddy ~/apps/caddy
+#   systemctl --user enable --now app@caddy      then open the firewall: sudo servers/linux/setup.sh heimdall --only=firewall
+#   and keep it: from a NEW ssh session within 5 minutes, sudo servers/linux/setup.sh --confirm-firewall
+name: caddy
+services:
+  app:                                  # named app so app@caddy.service can follow it
+    image: caddy:2.10.2
+    network_mode: host                  # reaches each project's 127.0.0.1 port; heimdall's firewall guards 80/443
+    restart: "no"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./data:/data                    # certificates: keep them (backup.sh caddy saves this folder)
+      - ./config:/config
+    logging:
+      driver: local
+      options:
+        max-size: "10m"
+        max-file: "3"

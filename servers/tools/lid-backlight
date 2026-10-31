@@ -1,0 +1,25 @@
+#!/bin/sh
+# lid-backlight: lid closed -> panel backlight to 0 (saves power and heat); lid open -> restore.
+# Run by acpid on every lid event (see /etc/acpi/events/lid-backlight) and once at boot.
+# The display itself stays enabled; only the backlight is turned off.
+set -eu
+panel=$(ls -d /sys/class/backlight/* 2>/dev/null | head -n1)
+[ -n "$panel" ] || exit 0                    # no backlight (desktop, or driver missing): nothing to do
+saved=/var/lib/lid-backlight/brightness
+state=$(cat /proc/acpi/button/lid/*/state 2>/dev/null | awk '{print $2}' | head -n1)
+case "$state" in
+  closed)
+    if [ ! -f "$saved" ]; then
+      mkdir -p "${saved%/*}"
+      cur=$(cat "$panel/brightness")
+      [ "$cur" -gt 0 ] || cur=$(( $(cat "$panel/max_brightness") / 5 ))
+      echo "$cur" > "$saved"
+    fi
+    echo 0 > "$panel/brightness" ;;
+  open)
+    if [ -f "$saved" ]; then
+      cat "$saved" > "$panel/brightness"
+      rm -f "$saved"
+    fi ;;
+  *) exit 0 ;;                               # no lid switch reported: leave the panel alone
+esac

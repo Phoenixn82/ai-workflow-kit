@@ -1,0 +1,9 @@
+[Unit]
+Description=Every 2 minutes: media port sync
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=2min
+
+[Install]
+WantedBy=timers.target

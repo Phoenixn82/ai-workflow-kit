@@ -1,0 +1,41 @@
+{
+  "_comment": "Copy this file to denylist.local.json next to public_push_gate.py, fill in your own identifiers, and keep the local file out of git.",
+  "denylist": [
+    {
+      "label": "legal name",
+      "regex": "\\b<your-legal-name>\\b",
+      "disabled": true
+    },
+    {
+      "label": "public handle",
+      "regex": "\\b<your-public-handle>\\b",
+      "disabled": true
+    },
+    {
+      "label": "personal email",
+      "regex": "\\b<your-email@example\\.com>\\b",
+      "disabled": true
+    },
+    {
+      "label": "home path",
+      "regex": "C:\\\\Users\\\\<you>",
+      "disabled": true
+    }
+  ],
+  "_allowlist_comment": "Repo-scoped exceptions for intended-public personal data. These suppress denylist/phone findings only, never gitleaks secret findings.",
+  "allowlist": [
+    {
+      "label": "example public contact email",
+      "regex": "\\bpublic@example\\.com\\b",
+      "repos": [
+        "owner/repo"
+      ],
+      "disabled": true
+    }
+  ],
+  "tool_paths": {
+    "codex": [
+      "C:\\\\Users\\\\<you>\\\\AppData\\\\Local\\\\OpenAI\\\\Codex\\\\bin\\\\<version>\\\\codex.exe"
+    ]
+  }
+}

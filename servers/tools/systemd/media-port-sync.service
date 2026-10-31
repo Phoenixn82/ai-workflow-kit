@@ -1,0 +1,7 @@
+[Unit]
+Description=Keep Transmission on the VPN's forwarded port; re-attach containers after a gluetun recreate
+After=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/opt/homeserver/media/port-sync.sh /opt/homeserver/media

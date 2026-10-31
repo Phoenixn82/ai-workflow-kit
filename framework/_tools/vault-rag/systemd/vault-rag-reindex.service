@@ -1,0 +1,14 @@
+[Unit]
+Description=vault-rag incremental reindex of the second-brain vault (embeddings on heimdall)
+
+[Service]
+Type=oneshot
+Nice=15
+IOSchedulingClass=idle
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+# EMBED_URL (heimdall's always-on CPU Ollama, _tools/vault-rag/heimdall/) and THOR_HOST come from hosts.env; set EMBED_URL
+# to thor's Ollama there to go back (reindex.sh then runs thor-up). VAULT_RAG_OLLAMA_HOST, if set, overrides EMBED_URL.
+EnvironmentFile=-%h/.config/ai-workflow-kit/hosts.env
+ExecStart=%h/AI_Projects/_tools/vault-rag/reindex.sh
+# above reindex.sh's 7200 s KILL so the script logs a timeout itself (CPU embeds; a killed run resumes from embed-cache.jsonl)
+TimeoutStartSec=2h10min

@@ -1,0 +1,53 @@
+#!/bin/sh
+# ssh-keylog: logs what an ssh key runs, then runs it unchanged. Observation only: the key keeps every right it had.
+# Use it as a forced command in front of a key line in ~/.ssh/authorized_keys:
+#   command="/usr/local/bin/ssh-keylog <label>" ssh-ed25519 AAAA... you@laptop
+# Each login writes one journal line (tag ssh-keylog): key=<label> from=<client address> cmd=<first 160 characters,
+# long tokens redacted>. Interactive shells, commands, sftp, scp and rsync all pass through.
+# Undo: delete the command="..." prefix from the key line. ssh-keylog --self-test: check the redaction offline.
+set -u
+# Redact first, then cut, so a cut never leaves half a token: long tokens, and the value after a password-like word.
+# The value is a whole shell word: quoted parts, backslash escapes and plain characters, so 'a'b, "a\"b" and a\ b are
+# hidden whole. A value that opens a quote and never closes it is hidden to the end; a stray quote later in the value
+# ends it (it usually closes an outer argument, as in -H 'Authorization: Bearer x').
+q="'"
+key="((pass(word|wd)?|token|secret|api[_-]?key|auth(orization)?|bearer)[\"$q]?[=: ]+(bearer )?)"
+ansi="\\\$$q([^$q\\\\]|\\\\.)*"   # bash $'...', where \' does not end the quote
+part="$ansi$q|\"([^\"\\\\]|\\\\.)*\"|$q[^$q]*$q|\\\\.|[^ \"$q\\\\]"
+word="($ansi|\"([^\"\\\\]|\\\\.)*|$q[^$q]*|$part)($part)*"
+redact() {
+  printf %s "$1" | tr '\n' ' ' | sed -E -e 's/[A-Za-z0-9_+=/-]{32,}/<redacted>/g' -e "s/$key$word/\\1<redacted>/Ig" |
+    head -c 160
+}
+if [ "${1:-}" = --self-test ]; then
+  fail() { echo "ssh-keylog self-test: FAIL $*"; exit 1; }
+  long=$(printf '%040d' 7)   # a synthetic 40-character token
+  [ "$(redact 'rsync --server -e.LsfxC . /srv')" = 'rsync --server -e.LsfxC . /srv' ] || fail plain
+  [ "$(redact "curl -H 'X-Token: $long' x")" = "curl -H 'X-Token: <redacted>' x" ] || fail token
+  [ "$(redact "$(printf 'a\nb')")" = 'a b' ] || fail newline
+  [ "$(redact "$(printf '%0200d' 0) end" | wc -c)" -le 160 ] || fail length
+  [ "$(redact 'mysql --password=hunter2 db')" = 'mysql --password=<redacted> db' ] || fail short-password
+  [ "$(redact "x '{\"secret\":\"hunter2\"}'")" = "x '{\"secret\":<redacted>'" ] || fail json-secret
+  [ "$(redact "tool --secret='alpha beta gamma' --next")" = "tool --secret=<redacted> --next" ] || fail quoted-secret
+  [ "$(redact 'tool --token "a b" x')" = 'tool --token <redacted> x' ] || fail quoted-token
+  [ "$(redact "curl -H 'Authorization: Bearer abc123' x")" = "curl -H 'Authorization: Bearer <redacted>' x" ] || fail bearer
+  [ "$(redact 'tool --token "a b')" = 'tool --token <redacted>' ] || fail unclosed-quote
+  [ "$(redact "tool --token 'a'b x")" = 'tool --token <redacted> x' ] || fail joined-quotes
+  [ "$(redact 'tool --token "a\"b c" x')" = 'tool --token <redacted> x' ] || fail escaped-quote
+  [ "$(redact 'tool --token a\ b x')" = 'tool --token <redacted> x' ] || fail escaped-space
+  [ "$(redact "tool --token \$'abc\\'def ghi' x")" = 'tool --token <redacted> x' ] || fail ansi-c-quote
+  filler=$(printf 'ab %.0s' $(seq 50))   # 150 characters that are not a token
+  case "$(redact "${filler}x $long")" in *000*) fail cut-after-redact ;; esac
+  echo "ssh-keylog self-test: ok"; exit 0
+fi
+label=$(printf %s "${1:-unknown}" | tr -cd 'A-Za-z0-9._@-')
+logger -t ssh-keylog -- "key=${label:-unknown} from=${SSH_CLIENT%% *} cmd=$(redact "${SSH_ORIGINAL_COMMAND:-<shell>}")" 2>/dev/null
+case "${SSH_ORIGINAL_COMMAND:-}" in
+  "") exec "$SHELL" -l ;;
+  sftp|internal-sftp|*/sftp-server)   # a forced command cannot run internal-sftp: use the sftp-server binary
+    for p in /usr/lib/openssh/sftp-server /usr/lib/ssh/sftp-server /usr/libexec/sftp-server /usr/libexec/openssh/sftp-server; do
+      [ -x "$p" ] && exec "$p"
+    done
+    echo "ssh-keylog: no sftp-server found" >&2; exit 1 ;;
+esac
+exec "$SHELL" -c "$SSH_ORIGINAL_COMMAND"

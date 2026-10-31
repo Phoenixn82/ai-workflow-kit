@@ -1,0 +1,254 @@
+#!/usr/bin/env bash
+# fleet-scan: weekly read-only malware check of your machines. Runs as root on heimdall (fleet-scan.timer).
+# For every host in /etc/fleet-scan/hosts it runs fleet-triage there over ssh and streams that host's Downloads
+# folders through ClamAV here; then fleet-triage on heimdall itself. It sends ONE message: the findings and what
+# changed since last week, or a one-line all clear. Report only: it never stops, deletes, moves or blocks anything.
+#
+#   fleet-scan              run now (what the timer does; root)
+#   fleet-scan --dry-run    print the hosts and what would run: no ssh, no scan, no message
+#   fleet-scan --self-test  the report logic against fake hosts in a temp folder (no network, no root)
+#
+# /etc/fleet-scan/hosts (root, 600): one host per line, name=user@address, then optional words:
+#   thor=you@thor wake=aa:bb:cc:dd:ee:ff     wake: send Wake-on-LAN first and wait up to 3 min (a box that sleeps)
+#   odin=you@odin port=22                    port: this host's OpenSSH port (default PORT below)
+# Do not list heimdall: it checks itself. A host that does not answer is reported "unreachable", never skipped silently.
+#
+# /etc/fleet-scan/fleet-scan.conf (optional, shell KEY=value lines):
+#   PORT=2222            OpenSSH port on the hosts. Use the kit's machine-job port: Tailscale SSH answers 22 and
+#                        ignores authorized_keys, so the forced command below would not apply there.
+#   NOTIFY_USER=you      send through /usr/local/bin/heimdall-alert as this user (telegram add-on: topic fleet).
+#                        Empty: /usr/local/bin/alert (ntfy or Telegram from /etc/homeserver/alert.conf).
+#   GLOBAL_HALT=...      the global kill switch; default ~NOTIFY_USER/AI_Projects/_system/automations/HALT
+#   WAKE_BROADCAST=192.0.2.255   LAN broadcast for wake= (255.255.255.255 is always tried too)
+#
+# Key: sudo ssh-keygen -q -t ed25519 -N '' -C fleet-scan@heimdall -f /etc/fleet-scan/id_ed25519
+# On each host: /usr/local/sbin/fleet-triage, a sudoers line for exactly that program, and ONE line in the ssh
+# user's ~/.ssh/authorized_keys (the key can run nothing else):
+#   command="sudo -n /usr/local/sbin/fleet-triage \"$SSH_ORIGINAL_COMMAND\"",restrict ssh-ed25519 AAAA... fleet-scan@heimdall
+# Host keys are pinned on first contact in /var/lib/fleet-scan/known_hosts; a changed key makes that host unreachable.
+# Kill switch: sudo touch /var/lib/fleet-scan/HALT (or the global HALT), or sudo systemctl disable --now fleet-scan.timer
+set -euo pipefail
+
+STATE=/var/lib/fleet-scan
+CONF=/etc/fleet-scan
+TRIAGE=/usr/local/sbin/fleet-triage
+SSH=ssh
+CLAMSCAN=clamscan
+SENT=""          # self-test only: append messages to this file instead of sending them
+
+die() { echo "fleet-scan: $*" >&2; exit 1; }
+
+load_conf() {
+  PORT=2222 NOTIFY_USER="" GLOBAL_HALT="" WAKE_BROADCAST=""
+  if [ -r "$CONF/fleet-scan.conf" ]; then . "$CONF/fleet-scan.conf"; fi
+  if [ -z "$GLOBAL_HALT" ] && [ -n "$NOTIFY_USER" ]; then
+    local home
+    home=$(getent passwd "$NOTIFY_USER" | cut -d: -f6 || true)
+    [ -n "$home" ] && GLOBAL_HALT="$home/AI_Projects/_system/automations/HALT"
+  fi
+  return 0
+}
+
+# read_hosts: one "name target port mac" line per host; a malformed line stops the run (never a silent skip)
+read_hosts() {
+  local file=$CONF/hosts line pair rest word name target port mac n=0
+  [ -r "$file" ] || die "missing $file (name=user@address lines)"
+  while IFS= read -r line || [ -n "$line" ]; do
+    n=$((n + 1)); line=${line%%#*}
+    read -r pair rest <<<"$line" || true
+    [ -n "${pair:-}" ] || continue
+    name=${pair%%=*}; target=${pair#*=}; port=$PORT; mac=-
+    [[ $pair == *=* && $name =~ ^[A-Za-z0-9_-]+$ && $target =~ ^[A-Za-z0-9_][A-Za-z0-9._-]*@[A-Za-z0-9][A-Za-z0-9.:_-]*$ ]] \
+      || die "$file line $n: want name=user@address, got: $pair"
+    for word in ${rest:-}; do
+      case "$word" in
+        port=*) port=${word#port=}; [[ $port =~ ^[0-9]{1,5}$ ]] || die "$file line $n: bad $word" ;;
+        wake=*) mac=${word#wake=}; [[ $mac =~ ^([0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}$ ]] || die "$file line $n: bad $word" ;;
+        *) die "$file line $n: unknown word $word (port=N or wake=MAC)" ;;
+      esac
+    done
+    echo "$name $target $port $mac"
+  done <"$file"
+}
+
+remote() {  # remote <user@host> <port> <triage|tar>: the key's forced command runs fleet-triage and nothing else
+  "$SSH" -i "$CONF/id_ed25519" -p "$2" -o BatchMode=yes -o IdentitiesOnly=yes -o ConnectTimeout=10 \
+    -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile="$STATE/known_hosts" "$1" "$3"
+}
+
+port_open() { timeout 3 bash -c ': </dev/tcp/$1/$2' port_open "$1" "$2" 2>/dev/null; }
+
+wake() {  # wake <address> <port> <mac>: one Wake-on-LAN packet, then wait up to 3 minutes for ssh
+  port_open "$1" "$2" && return 0
+  python3 - "$3" "$WAKE_BROADCAST" <<'WOL'
+import socket, sys
+mac = bytes.fromhex(sys.argv[1].replace(":", "").replace("-", ""))
+with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+    s.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+    for a in {sys.argv[2] or "255.255.255.255", "255.255.255.255"}:
+        s.sendto(b"\xff" * 6 + mac * 16, (a, 9))
+WOL
+  local _
+  for _ in $(seq 36); do port_open "$1" "$2" && return 0; sleep 5; done
+  return 1
+}
+
+check() {  # check <name> <new output>: its findings ("!! " lines) and the changes against last week's copy
+  local name=$1 new=$2 old="$STATE/$1.txt"
+  { grep '^!! ' "$new" || true; } | head -15 | sed "s/^!! /$name: /"
+  if [ -f "$old" ]; then
+    { diff <(grep -v '^!! ' "$old" || true) <(grep -v '^!! ' "$new" || true) || true; } | { grep -E '^[<>] ' || true; } \
+      | head -15 | sed -e "s/^> /$name new: /" -e "s/^< /$name gone: /"
+  fi
+  mv "$new" "$old"
+}
+
+scan_downloads() {  # scan_downloads <name> <user@host> <port>: the host's Downloads as one tar stream through ClamAV
+  # Limits raised from ClamAV's defaults (400 MB per stream, 10,000 files), past which it stops and calls the rest clean.
+  local out st sent rc
+  out=$(set +e; remote "$2" "$3" tar | nice "$CLAMSCAN" --no-summary --max-scansize=4000M --max-filesize=2000M \
+    --max-files=100000 - 2>/dev/null; echo "#status ${PIPESTATUS[0]} ${PIPESTATUS[1]}")
+  st=${out##*#status }; out=${out%#status *}
+  read -r sent rc <<<"$st"
+  printf '%s\n' "$out" | grep ' FOUND$' | sed "s/^stdin: /$1: ClamAV hit in Downloads: /" || true
+  # each side on its own: the transfer must exit 0; clamscan exits 0 clean, 1 when it found something
+  if [ "$sent" != 0 ]; then echo "$1: Downloads not scanned (transfer exit $sent)"
+  elif [ "$rc" -gt 1 ]; then echo "$1: Downloads scan failed (ClamAV exit $rc)"; fi
+}
+
+notify() {
+  if [ -n "$SENT" ]; then printf '%s\n--\n' "$1" >>"$SENT"; return 0; fi
+  if [ -n "$NOTIFY_USER" ]; then runuser -u "$NOTIFY_USER" -- /usr/local/bin/heimdall-alert "$1"
+  else /usr/local/bin/alert "$1"; fi
+}
+
+main() {
+  load_conf
+  local h
+  for h in "$GLOBAL_HALT" "$STATE/HALT"; do
+    if [ -n "$h" ] && [ -e "$h" ]; then echo "fleet-scan: HALT present ($h)"; return 0; fi
+  done
+  local hosts name target port mac addr r report="" names=""
+  hosts=$(read_hosts) || return 1   # a bad hosts file stops the run, also where set -e is off
+  install -d -m 700 "$STATE"
+  while read -r name target port mac; do
+    [ -n "$name" ] || continue
+    names+="$name, "
+    addr=${target#*@}
+    if [ "$mac" != - ] && ! wake "$addr" "$port" "$mac"; then
+      report+="$name: did not wake up, not scanned"$'\n'; continue
+    fi
+    if ! remote "$target" "$port" triage >"$STATE/$name.new" 2>/dev/null </dev/null || ! [ -s "$STATE/$name.new" ]; then
+      report+="$name: unreachable, not scanned"$'\n'; rm -f "$STATE/$name.new"; continue
+    fi
+    r=$(check "$name" "$STATE/$name.new"); [ -z "$r" ] || report+="$r"$'\n'
+    r=$(scan_downloads "$name" "$target" "$port" </dev/null); [ -z "$r" ] || report+="$r"$'\n'
+  done <<<"$hosts"
+  local me
+  me=$(hostname -s 2>/dev/null || echo heimdall)
+  names+="$me"
+  "$TRIAGE" >"$STATE/$me.new" 2>/dev/null || true
+  r=$(check "$me" "$STATE/$me.new"); [ -z "$r" ] || report+="$r"$'\n'
+
+  report=$(printf '%s' "$report" | sed '/^$/d')
+  local msg
+  if [ -n "$report" ]; then
+    msg="fleet-scan: review these (new = changed since last week; expected after installs)"$'\n'"$report"
+  else
+    msg="fleet-scan: all clear ($names)"
+  fi
+  printf '%s\n' "$msg" >"$STATE/last-report.txt"
+  echo "$msg"
+  # one message: lines cut at 300 characters, at most 60 lines and below Telegram's 4096-character limit
+  notify "$(printf '%s\n' "$msg" | cut -c1-300 | head -60 | head -c 3800)" || die "sending the report failed (it is in $STATE/last-report.txt)"
+}
+
+dry_run() {
+  load_conf
+  echo "fleet-scan --dry-run: nothing is contacted, scanned or sent"
+  echo "kill switches: $STATE/HALT ${GLOBAL_HALT:+and $GLOBAL_HALT}"
+  local hosts name target port mac
+  hosts=$(read_hosts) || return 1   # a bad hosts file stops the run, also where set -e is off
+  while read -r name target port mac; do
+    [ -n "$name" ] || continue
+    [ "$mac" = - ] || echo "$name: Wake-on-LAN $mac, wait for ${target#*@}:$port"
+    echo "$name: ssh -p $port $target triage   then: ssh ... tar | clamscan -"
+  done <<<"$hosts"
+  echo "$(hostname -s 2>/dev/null || echo heimdall): $TRIAGE (this box)"
+  if [ -n "$NOTIFY_USER" ]; then echo "report to: /usr/local/bin/heimdall-alert as $NOTIFY_USER"
+  else echo "report to: /usr/local/bin/alert (/etc/homeserver/alert.conf)"; fi
+  [ -r "$CONF/id_ed25519" ] || echo "warning: no key at $CONF/id_ed25519 yet"
+  command -v "$CLAMSCAN" >/dev/null || echo "warning: clamscan not installed (apt install clamav clamav-freshclam)"
+}
+
+self_test() {
+  local t
+  t=$(mktemp -d); TEST_DIR=$t; trap 'rm -rf "$TEST_DIR"' EXIT
+  STATE=$t/state CONF=$t/conf TRIAGE=$t/triage-local SSH=$t/ssh CLAMSCAN=$t/clamscan SENT=$t/sent
+  mkdir -p "$CONF" "$t/h/alpha" "$t/h/beta"
+  # fake ssh: the last two words are user@host and the command; it answers from $t/h/<host>/<command>
+  cat >"$t/ssh" <<EOF
+#!/usr/bin/env bash
+host=\${@: -2:1}; host=\${host#*@}
+[ -f "$t/h/\$host/\${@: -1}" ] || exit 255
+cat "$t/h/\$host/\${@: -1}"
+exit "\$(cat "$t/h/\$host/\${@: -1}.rc" 2>/dev/null || echo 0)"
+EOF
+  printf '#!/bin/sh\ngrep -q FAKE-MALWARE-MARKER && { echo "stdin: Fake.Marker FOUND"; exit 1; }\nexit 0\n' >"$t/clamscan"
+  printf '#!/bin/sh\necho "## users"\necho "uid0 root"\n' >"$t/triage-local"
+  chmod +x "$t/ssh" "$t/clamscan" "$t/triage-local"
+  printf '## users\nuid0 root\n## authorized_keys\n/home/u/.ssh/authorized_keys u@laptop\n' >"$t/h/alpha/triage"
+  printf 'clean\n' >"$t/h/alpha/tar"
+  printf '## procs\n!! odd exe pid 42: /tmp/x\n## users\nuid0 root\n' >"$t/h/beta/triage"
+  printf 'clean\n' >"$t/h/beta/tar"
+  printf 'alpha=u@alpha\nbeta=u@beta port=22  # a comment\ndown=u@down\n' >"$CONF/hosts"
+  local me sent
+  me=$(hostname -s 2>/dev/null || echo heimdall)
+  fail() { echo "self-test FAILED: $1"; echo "--- sent:"; cat "$SENT" 2>/dev/null; exit 1; }
+
+  ( main ) >/dev/null || fail "run 1 exited non-zero"
+  sent=$(cat "$SENT"); : >"$SENT"
+  [[ $sent == *"beta: odd exe pid 42: /tmp/x"* ]] || fail "run 1: finding not reported"
+  [[ $sent == *"down: unreachable, not scanned"* ]] || fail "run 1: unreachable host not reported"
+  [[ $sent != *alpha* ]] || fail "run 1: clean first run of alpha reported"
+
+  printf '/home/u/.ssh/authorized_keys new-key@somewhere\n' >>"$t/h/alpha/triage"
+  printf 'FAKE-MALWARE-MARKER\n' >"$t/h/beta/tar"
+  ( main ) >/dev/null || fail "run 2 exited non-zero"
+  sent=$(cat "$SENT"); : >"$SENT"
+  [[ $sent == *"alpha new: /home/u/.ssh/authorized_keys new-key@somewhere"* ]] || fail "run 2: change not reported"
+  [[ $sent == *"beta: ClamAV hit in Downloads: Fake.Marker FOUND"* ]] || fail "run 2: ClamAV hit not reported"
+
+  printf 'alpha=u@alpha\nbeta=u@beta\n' >"$CONF/hosts"
+  printf '## users\nuid0 root\n' >"$t/h/beta/triage"; printf 'clean\n' >"$t/h/beta/tar"
+  ( main ) >/dev/null || fail "run 3 exited non-zero"
+  sent=$(cat "$SENT"); : >"$SENT"
+  [[ $sent == *"beta gone: ## procs"* ]] || fail "run 3: removed section not reported"
+  ( main ) >/dev/null || fail "run 4 exited non-zero"
+  sent=$(cat "$SENT"); : >"$SENT"
+  [[ $sent == "fleet-scan: all clear (alpha, beta, $me)"* ]] || fail "run 4: want all clear, got: $sent"
+  echo 1 >"$t/h/alpha/tar.rc"   # the transfer broke while ClamAV saw a clean (short) stream
+  ( main ) >/dev/null || fail "run 5 exited non-zero"
+  sent=$(cat "$SENT"); : >"$SENT"
+  [[ $sent == *"alpha: Downloads not scanned (transfer exit 1)"* && $sent != *"all clear"* ]] ||
+    fail "run 5: a failed transfer passed as clean: $sent"
+  rm "$t/h/alpha/tar.rc"
+
+  touch "$STATE/HALT"
+  ( main ) >/dev/null || fail "HALT run exited non-zero"
+  [ ! -s "$SENT" ] || fail "HALT: a message was sent"
+  rm "$STATE/HALT"
+
+  printf 'alpha=u@alpha;reboot\n' >"$CONF/hosts"
+  if ( main ) >/dev/null 2>&1; then fail "a malformed hosts line was accepted"; fi
+  printf 'alpha=-oProxyCommand=x@y\n' >"$CONF/hosts"
+  if ( main ) >/dev/null 2>&1; then fail "an ssh option as the target was accepted"; fi
+  echo "fleet-scan self-test: ok"
+}
+
+case "${1:-}" in
+  --self-test) self_test ;;
+  --dry-run) dry_run ;;
+  "") [ "$(id -u)" = 0 ] || die "run as root (sudo fleet-scan), or try --dry-run / --self-test"; main ;;
+  *) die "usage: fleet-scan [--dry-run | --self-test]" ;;
+esac

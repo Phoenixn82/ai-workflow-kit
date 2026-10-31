@@ -1,0 +1,7 @@
+[Unit]
+Description=thor-sleep idle check every 10 min
+[Timer]
+OnBootSec=15min
+OnUnitActiveSec=10min
+[Install]
+WantedBy=timers.target

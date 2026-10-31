@@ -1,0 +1,30 @@
+# ~/.config/systemd/user/app@.service: runs the project in ~/apps/<name> with Docker Compose; the instance name is
+# the folder name. One unit file serves every project (deploy.sh installs it):
+#   systemctl --user enable --now app@myapp        journalctl --user -u app@myapp -f
+# Needs lingering, or user units stop when you log out: sudo loginctl enable-linger "$USER" (deploy.sh asks).
+[Unit]
+Description=Project %i (docker compose in ~/apps/%i)
+Wants=network-online.target
+After=network-online.target
+StartLimitIntervalSec=10min
+StartLimitBurst=5
+
+[Service]
+Type=simple
+WorkingDirectory=%h/apps/%i
+# in the foreground, so systemd sees the project die: a crash of the app service stops the project with its exit
+# code and Restart=on-failure brings it back. --exit-code-from implies --abort-on-container-exit: ANY container
+# that exits stops the project, so one-shot jobs (migrations) run with `docker compose run --rm`, not as services.
+ExecStart=/usr/bin/docker compose up --remove-orphans --exit-code-from app
+ExecStop=/usr/bin/docker compose down --timeout 30
+Restart=on-failure
+RestartSec=15
+# `down --timeout 30` stops the app with SIGTERM (143), then SIGKILL (137), and `up` hands that code back: on a stop
+# it is success, not `failed`. The same codes from a crash (an OOM kill is 137) still restart the project.
+SuccessExitStatus=137 143
+RestartForceExitStatus=137 143
+# the first start pulls the image
+TimeoutStartSec=10min
+
+[Install]
+WantedBy=default.target

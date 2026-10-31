@@ -1,0 +1,176 @@
+#!/usr/bin/env python3
+"""thor-wake-proxy: TCP forwarder on heimdall that wakes thor before forwarding.
+
+thor suspends after 60 idle minutes. Hermes (always on, on heimdall) talks to thor's FreeLLMAPI and Ollama
+through this proxy: each new connection checks thor's port, and if it is closed runs WAKE_CMD (`fleet-wake wake thor`)
+and waits for it (up to WAKE_WAIT seconds) before piping bytes both ways. Raw TCP, so streaming just works.
+
+Usage: thor-wake-proxy LOCAL_PORT:THOR_PORT [...]   (e.g. 3002:3001 11435:11434; listens on 127.0.0.1)
+       thor-wake-proxy --self-test
+Env: THOR_ADDR (else THOR_HOST in hosts.env), WAKE_WAIT (default 150), WAKE_CMD (default "fleet-wake wake thor";
+     odin has no fleet-wake, so its unit sets WAKE_CMD=thor-up).
+"""
+import os
+import shlex
+import socket
+import socketserver
+import subprocess
+import sys
+import threading
+import time
+
+def hosts_env(key):
+    """Environment wins, then the kit hosts.env (last value wins)."""
+    if os.environ.get(key):
+        return os.environ[key]
+    path = os.environ.get("KIT_HOSTS_ENV") or os.path.expanduser("~/.config/ai-workflow-kit/hosts.env")
+    try:
+        with open(path) as f:
+            vals = [v.strip().strip("\"'") for k, _, v in (line.partition("=") for line in f.read().splitlines())
+                    if k.strip() == key]
+    except OSError:
+        return ""
+    return vals[-1] if vals else ""
+
+
+THOR = os.environ.get("THOR_ADDR") or hosts_env("THOR_HOST")
+WAKE_WAIT = int(os.environ.get("WAKE_WAIT", "150"))
+WAKE_CMD = shlex.split(os.environ.get("WAKE_CMD", "fleet-wake wake thor"))
+_wake_lock = threading.Lock()
+
+
+def is_open(host, port, timeout=3):
+    try:
+        socket.create_connection((host, port), timeout=timeout).close()
+        return True
+    except OSError:
+        return False
+
+
+def ensure_up(port, wake=lambda: subprocess.run(WAKE_CMD, timeout=120)):
+    """True once THOR:port answers; wakes thor at most once per waiting window (one waker, others wait)."""
+    if is_open(THOR, port):
+        return True
+    with _wake_lock:
+        if is_open(THOR, port):
+            return True
+        print(f"thor:{port} closed, waking thor", flush=True)
+        try:
+            wake()
+        except Exception as e:  # keep waiting: heimdall's fleet-wake timer may wake it anyway
+            print(f"fleet-wake failed: {e}", flush=True)
+        deadline = time.time() + WAKE_WAIT
+        while time.time() < deadline:
+            if is_open(THOR, port):
+                print(f"thor:{port} up", flush=True)
+                return True
+            time.sleep(3)
+    return False
+
+
+def pipe(src, dst):
+    try:
+        while data := src.recv(65536):
+            dst.sendall(data)
+    except OSError:
+        pass
+    finally:
+        for s in (src, dst):
+            try:
+                s.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+
+
+def handler_for(thor_port):
+    class Forward(socketserver.BaseRequestHandler):
+        def handle(self):
+            if not ensure_up(thor_port):
+                print(f"thor:{thor_port} still down after {WAKE_WAIT}s, dropping connection", flush=True)
+                return
+            up = socket.create_connection((THOR, thor_port), timeout=10)
+            up.settimeout(None)
+            t = threading.Thread(target=pipe, args=(up, self.request), daemon=True)
+            t.start()
+            pipe(self.request, up)
+            t.join()
+            up.close()
+    return Forward
+
+
+class Server(socketserver.ThreadingTCPServer):
+    allow_reuse_address = True
+    daemon_threads = True
+
+
+def self_test():
+    global THOR
+    import tempfile
+    import runpy
+    with tempfile.TemporaryDirectory() as td:
+        env = dict(os.environ)
+        try:
+            path = os.path.join(td, "hosts.env")
+            with open(path, "w") as f:
+                f.write("THOR_HOST=first.example\nTHOR_HOST=thor.example\n")
+            os.environ["KIT_HOSTS_ENV"] = path
+            os.environ.pop("THOR_ADDR", None)
+            os.environ.pop("THOR_HOST", None)
+            assert runpy.run_path(__file__, run_name="test_hosts")["THOR"] == "thor.example"
+            os.environ["THOR_ADDR"] = "override.example"
+            assert runpy.run_path(__file__, run_name="test_override")["THOR"] == "override.example"
+            os.environ.pop("THOR_ADDR")
+            with open(path, "w") as f:
+                f.write("THOR_HOST=\n")
+            result = subprocess.run([sys.executable, __file__, "3002:3001"], capture_output=True, text=True)
+            assert result.returncode == 2 and "set THOR_HOST in hosts.env" in result.stderr
+        finally:
+            os.environ.clear()
+            os.environ.update(env)
+    # a local "thor" that is closed at first, then opened by the fake wake
+    probe = socket.socket()
+    probe.bind(("127.0.0.1", 0))
+    port = probe.getsockname()[1]
+    probe.close()
+    THOR = "127.0.0.1"
+    backend = {}
+
+    def fake_wake():
+        srv = socketserver.TCPServer(("127.0.0.1", port), type("E", (socketserver.BaseRequestHandler,), {
+            "handle": lambda self: self.request.sendall(self.request.recv(100).upper())}))
+        backend["srv"] = srv
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+
+    assert not is_open(THOR, port)
+    assert ensure_up(port, wake=fake_wake), "wake path failed"
+    front = Server(("127.0.0.1", 0), handler_for(port))
+    threading.Thread(target=front.serve_forever, daemon=True).start()
+    c = socket.create_connection(front.server_address, timeout=5)
+    c.sendall(b"ping")
+    assert c.recv(100) == b"PING", "forwarding failed"
+    c.close()
+    front.shutdown()
+    backend["srv"].shutdown()
+    print("thor-wake-proxy self-test: ok")
+
+
+def main(args):
+    if args == ["--self-test"]:
+        return self_test()
+    if not THOR:
+        print("set THOR_HOST in hosts.env", file=sys.stderr)
+        return 2
+    if not args:
+        sys.exit(__doc__)
+    servers = []
+    for spec in args:
+        local, remote = (int(x) for x in spec.split(":"))
+        s = Server(("127.0.0.1", local), handler_for(remote))
+        threading.Thread(target=s.serve_forever, daemon=True).start()
+        servers.append(s)
+        print(f"127.0.0.1:{local} -> {THOR}:{remote}", flush=True)
+    threading.Event().wait()
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

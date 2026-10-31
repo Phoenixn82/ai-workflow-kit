@@ -1,0 +1,153 @@
+#!/usr/bin/env python3
+"""freellmapi-probe: runs on heimdall every 30 min. Asks thor's FreeLLMAPI router for a real completion through
+a cloud-only profile (auto:quick = groq / nvidia / ollama-cloud; never thor's local 'custom' Ollama) and sends ONE
+silent Telegram (heimdall-alert) per state change. /health can stay 200 while the container has no DNS;
+this checks the thing callers actually need. Skips while thor sits on a fleet-wake hold (asleep on purpose).
+  freellmapi-probe              probe; alert on up->down / down->up
+  freellmapi-probe --dry-run    probe; print the alert instead of sending; leave state alone
+  freellmapi-probe --self-test
+Key: ~/.config/freellmapi-probe/key (0600, the router's unified key; written by install.sh, never printed).
+Router: FREELLMAPI_URL (OpenAI-compatible base URL, ending in /v1) from the environment or
+~/.config/ai-workflow-kit/hosts.env (KIT_HOSTS_ENV overrides the path)."""
+import http.client
+import json
+import os
+import subprocess
+import sys
+import time
+import urllib.error
+import urllib.request
+from pathlib import Path
+
+KIT_HOSTS = Path(os.environ.get("KIT_HOSTS_ENV") or Path.home() / ".config/ai-workflow-kit/hosts.env")
+MODEL = "auto:quick"
+KEY = Path.home() / ".config/freellmapi-probe/key"
+STATE = Path.home() / ".local/state/freellmapi-probe/state"
+HALT = [Path.home() / "AI_Projects/_system/automations/HALT", STATE.parent / "HALT"]
+
+
+def hosts_env(key):
+    """KEY from the environment, else from the kit's hosts.env (last KEY=value wins); "" when missing."""
+    if os.environ.get(key):
+        return os.environ[key]
+    try:
+        vals = [v.strip().strip("'\"") for k, _, v in (line.partition("=") for line in KIT_HOSTS.read_text().splitlines())
+                if k.strip() == key]
+    except OSError:
+        return ""
+    return vals[-1] if vals else ""
+
+
+def url():
+    base = hosts_env("FREELLMAPI_URL").rstrip("/")
+    if not base:
+        raise SystemExit(f"freellmapi-probe: set FREELLMAPI_URL (the router's /v1 base URL) in {KIT_HOSTS}")
+    return base + "/chat/completions"
+
+
+def verdict(via, text):
+    if not text:
+        return False, f"empty completion via {via or '?'}"
+    if not via or via.startswith("custom/"):  # custom = thor-local Ollama: proves nothing about the cloud leg
+        return False, f"not a cloud route ({via or 'no X-Routed-Via header'})"
+    return True, via
+
+
+def probe():
+    body = {"model": MODEL, "max_tokens": 64, "messages": [{"role": "user", "content": "Reply with the single word: pong"}]}
+    key = ""
+    try:  # key read inside the try: an unreadable key must alert, not crash the unit silently
+        key = KEY.read_text().strip()
+        req = urllib.request.Request(url(), json.dumps(body).encode(), {
+            "Authorization": "Bearer " + key, "Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=90) as r:
+            via = r.headers.get("X-Routed-Via", "")
+            text = (json.load(r)["choices"][0]["message"].get("content") or "").strip()
+    except urllib.error.HTTPError as e:
+        return False, f"HTTP {e.code}" + (" (unified key rotated? re-run install.sh)" if e.code == 401 else "")
+    except (OSError, http.client.HTTPException, ValueError, KeyError, IndexError, TypeError) as e:
+        err = f"{type(e).__name__}: {e}"  # http.client's "Invalid header value" echoes a malformed key
+        for part in key.split():  # split: the error shows the value via repr(), newlines escaped
+            err = err.replace(part, "<key>")
+        return False, err[:200]
+    return verdict(via, text)
+
+
+def change(old, ok):
+    """-> (new state, alert?). First sighting alerts only when down (a baseline 'up' is not news)."""
+    new = "up" if ok else "down"
+    return new, new != old and (old in ("up", "down") or not ok)
+
+
+def thor_held():
+    try:
+        out = subprocess.run(["/usr/local/bin/fleet-wake", "status"], capture_output=True, text=True, timeout=20).stdout
+    except (OSError, subprocess.TimeoutExpired):
+        return False  # ponytail: no fleet-wake = no hold to respect; probe anyway
+    return any(line.split(":", 1)[1].strip() in ("hold", "hold1") for line in out.splitlines() if line.startswith("thor:"))
+
+
+def main(args):
+    if args == ["--self-test"]:
+        assert verdict("groq/openai/gpt-oss-120b", "pong") == (True, "groq/openai/gpt-oss-120b")
+        assert not verdict("custom/qwen3:8b", "pong")[0] and not verdict("groq/x", "")[0] and not verdict("", "pong")[0]
+        assert change("", True) == ("up", False) and change("", False) == ("down", True)
+        assert change("up", False) == ("down", True) and change("down", True) == ("up", True)
+        assert change("up", True) == ("up", False) and change("down", False) == ("down", False)
+        global KIT_HOSTS  # router URL: environment, else hosts.env, else a clear SystemExit
+        import tempfile
+        saved, real = os.environ.pop("FREELLMAPI_URL", None), KIT_HOSTS
+        with tempfile.TemporaryDirectory() as d:
+            KIT_HOSTS = Path(d) / "hosts.conf"
+            try:
+                try:
+                    url(); raise AssertionError("no FREELLMAPI_URL must exit")
+                except SystemExit as e:
+                    assert "set FREELLMAPI_URL" in str(e) and str(KIT_HOSTS) in str(e), e
+                KIT_HOSTS.write_text("# c\nFREELLMAPI_URL=http://192.0.2.7:3001/v1/\n")
+                assert url() == "http://192.0.2.7:3001/v1/chat/completions"
+                os.environ["FREELLMAPI_URL"] = "http://192.0.2.8:3001/v1"
+                assert url() == "http://192.0.2.8:3001/v1/chat/completions"
+            finally:
+                os.environ.pop("FREELLMAPI_URL", None)
+                if saved is not None:
+                    os.environ["FREELLMAPI_URL"] = saved
+                KIT_HOSTS = real
+        print("self-test passed")
+        return 0
+    if args not in ([], ["--dry-run"]):
+        print(__doc__, file=sys.stderr)
+        return 2
+    dry = args == ["--dry-run"]
+    if any(h.exists() for h in HALT):
+        print("freellmapi-probe: HALT present")
+        return 0
+    if thor_held():
+        print("freellmapi-probe: thor is on a fleet-wake hold; skipped")
+        return 0
+    ok, detail = probe()
+    if not ok:  # one blip (provider 429, router restart) must not page: retry once before calling it down
+        time.sleep(30)
+        ok, detail = probe()
+    if not ok and thor_held():  # thor-sleep sets the hold ~2 s before suspending, possibly mid-probe
+        print("freellmapi-probe: thor went on a fleet-wake hold during the probe; skipped")
+        return 0
+    old = STATE.read_text().strip() if STATE.exists() else ""
+    new, alert = change(old, ok)
+    print(f"freellmapi-probe: {new} ({detail}); was {old or 'unknown'}")
+    if alert:
+        msg = (f"FreeLLMAPI on thor: cloud completions working again (via {detail})." if ok else
+               f"FreeLLMAPI on thor: cloud completions FAILING ({detail}). /health can still say healthy; "
+               "check `docker logs freellmapi-docker-freellmapi-1` on thor (DNS, keys).")
+        if dry:
+            print("would alert:", msg)
+        else:
+            subprocess.run(["/usr/local/bin/heimdall-alert", msg], timeout=60)
+    if not dry:
+        STATE.parent.mkdir(parents=True, exist_ok=True)
+        STATE.write_text(new + "\n")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

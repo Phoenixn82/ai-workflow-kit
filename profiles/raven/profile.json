@@ -1,0 +1,29 @@
+{
+  "name": "raven",
+  "role": "the viewer: a laptop or tablet that only connects to the others",
+  "for": "anyone who wants to drive the fleet from a light machine with nothing heavy installed",
+  "addon": false,
+  "os": [
+    "arch",
+    "debian",
+    "macos"
+  ],
+  "tools": [
+    "git",
+    "python3",
+    "openssh",
+    "tailscale",
+    "hosts-env",
+    "tmux",
+    "mosh",
+    "node",
+    "claude",
+    "herdr",
+    "thor-up",
+    "ac-power-profile"
+  ],
+  "services": [],
+  "automations": [],
+  "rules": [],
+  "requires_hardware": {}
+}

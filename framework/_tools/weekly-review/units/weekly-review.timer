@@ -1,0 +1,10 @@
+[Unit]
+Description=weekly-review: Sundays 03:17 Etc/UTC
+
+[Timer]
+# fixed slot after restic-odin (03:10); one host, so no random spread needed
+OnCalendar=Sun *-*-* 03:17:00 Etc/UTC
+Persistent=true
+
+[Install]
+WantedBy=timers.target

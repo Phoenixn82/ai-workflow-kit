@@ -1,0 +1,9 @@
+#!/bin/sh
+# heimdall-alert MESSAGE: where heimdall's own jobs (fleet-wake, freellmapi-probe) send alerts; they run as you.
+# With the telegram add-on set up (tg plus your ~/telegram-bot.token) it posts to the silent "fleet" topic;
+# otherwise it hands the message to alert, which sends it with /etc/homeserver/alert.conf (ntfy or Telegram).
+# setup.sh heimdall installs this only when /usr/local/bin/heimdall-alert does not exist: replace it freely.
+# the telegram add-on links tg into ~/.local/bin, which a systemd user unit's PATH (fleet-wake, the probe) lacks
+PATH=$PATH:$HOME/.local/bin
+if command -v tg >/dev/null 2>&1 && [ -r "$HOME/telegram-bot.token" ]; then exec tg fleet "$*"; fi
+exec /usr/local/bin/alert "$*"

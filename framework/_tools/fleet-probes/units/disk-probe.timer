@@ -1,0 +1,9 @@
+[Unit]
+Description=Run the thor disk-free probe every 6 hours
+
+[Timer]
+OnCalendar=00/6:20
+Persistent=true
+
+[Install]
+WantedBy=timers.target

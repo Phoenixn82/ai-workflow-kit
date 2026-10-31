@@ -1,0 +1,185 @@
+#!/usr/bin/env python3
+"""wazuh-tg: send serious Wazuh alerts (rule level >= 12) to your phone. Runs on heimdall as wazuh-tg.service (root,
+because the manager's alerts.json lives in a root-only Docker volume). Python standard library only.
+
+It follows alerts.json the way `tail -F` does: skips the history at start, reads the rest of the old file and then the
+new one from its start when the manager rotates it (nightly), starts over after a truncation, and waits while the
+file is missing. Each rule + agent pair is sent at most once per hour, so a burst of the same alert is one message.
+Report only: it never acts on a host.
+
+  wazuh-tg                 run (what the unit does)
+  wazuh-tg --alerts PATH   follow another alerts.json
+  wazuh-tg --self-test     the filter, the dedupe and the rotation handling, offline, in a temp folder
+
+Settings (environment; the unit reads /etc/wazuh-tg/env, KEY=value lines, all optional):
+  WAZUH_ALERTS=/var/lib/docker/volumes/single-node_wazuh_logs/_data/alerts/alerts.json
+                     where the upstream single-node compose keeps it (volume <project>_wazuh_logs; check with
+                     docker volume ls | grep wazuh_logs)
+  MIN_LEVEL=12       Wazuh 12-15 = high and critical; 7-11 stay in the dashboard
+  QUIET_SECONDS=3600 one message per rule + agent per hour
+  NOTIFY_USER=you    send through /usr/local/bin/heimdall-alert as this user (telegram add-on: topic fleet);
+                     empty: /usr/local/bin/alert (ntfy or Telegram from /etc/homeserver/alert.conf)
+Kill switch: sudo touch /var/lib/wazuh-tg/HALT (alerts are read but not sent), or
+sudo systemctl disable --now wazuh-tg.
+"""
+import json
+import os
+import subprocess
+import sys
+import tempfile
+import time
+
+ALERTS = os.environ.get("WAZUH_ALERTS", "/var/lib/docker/volumes/single-node_wazuh_logs/_data/alerts/alerts.json")
+MIN_LEVEL = int(os.environ.get("MIN_LEVEL", "12"))
+QUIET_SECONDS = int(os.environ.get("QUIET_SECONDS", "3600"))
+NOTIFY_USER = os.environ.get("NOTIFY_USER", "")
+HALT = "/var/lib/wazuh-tg/HALT"
+seen = {}
+
+
+def message(a, now):
+    """(key, text) to send for one alert, or None (too low, or the same rule + agent sent inside the quiet hour)."""
+    rule, agent = a.get("rule", {}), a.get("agent", {}).get("name", "?")
+    if int(rule.get("level", 0)) < MIN_LEVEL:
+        return None
+    key = (rule.get("id"), agent)
+    if key in seen and now - seen[key] < QUIET_SECONDS:
+        return None
+    if len(seen) > 5000:  # forget pairs whose quiet hour is over, so the table stays small
+        for k in [k for k, t in seen.items() if now - t >= QUIET_SECONDS]:
+            del seen[k]
+    return key, f"wazuh L{rule.get('level')} on {agent}: {str(rule.get('description', ''))[:200]} (rule {rule.get('id')})"
+
+
+class Follower:
+    """New complete lines of a file that gets rotated (renamed, a new file in its place) or truncated."""
+
+    def __init__(self, path):
+        self.path, self.f, self.ino, self.buf = path, None, None, b""
+        self.skip_history = True  # only the file present at start; one that appears later is read from its start
+
+    def _open(self, st, at_end):
+        self.f, self.ino, self.buf = open(self.path, "rb"), st.st_ino, b""
+        if at_end:
+            self.f.seek(0, 2)
+
+    def _read(self):
+        data = self.buf + self.f.read()
+        *lines, self.buf = data.split(b"\n")  # an unfinished last line waits for the rest
+        return [ln.decode("utf-8", "replace") for ln in lines if ln.strip()]
+
+    def lines(self):
+        try:
+            st = os.stat(self.path)
+        except FileNotFoundError:
+            st = None
+        out = []
+        if self.f is None:
+            if st is None:
+                self.skip_history = False
+                return out
+            self._open(st, self.skip_history)
+        elif st is not None and st.st_ino != self.ino:  # rotated: finish the old file, then the new one from its start
+            out += self._read()
+            self.f.close()
+            self._open(st, False)
+        elif st is not None and st.st_size < self.f.tell():  # truncated in place
+            self.f.seek(0)
+            self.buf = b""
+        return out + self._read()
+
+
+def send(text):
+    cmd = (["runuser", "-u", NOTIFY_USER, "--", "/usr/local/bin/heimdall-alert", text] if NOTIFY_USER
+           else ["/usr/local/bin/alert", text])
+    try:
+        if subprocess.run(cmd, check=False, timeout=60).returncode == 0:
+            return True
+        print("wazuh-tg: send failed: the alert command exited non-zero", file=sys.stderr, flush=True)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        print(f"wazuh-tg: send failed: {e}", file=sys.stderr, flush=True)
+    return False
+
+
+def deliver(m, now, sender=send):
+    """Send one message; the quiet hour starts only once it went out, so a failed send is retried next time."""
+    if sender(m[1]):
+        seen[m[0]] = now
+
+
+def handle(line, now):
+    try:
+        return message(json.loads(line), now)
+    except (ValueError, TypeError, AttributeError):
+        return None  # not an alert we can read: skip it
+
+
+def follow(path):
+    print(f"wazuh-tg: following {path}, level >= {MIN_LEVEL}", flush=True)
+    fol = Follower(path)
+    while True:
+        for line in fol.lines():
+            now = time.time()
+            m = handle(line, now)
+            if m and not os.path.exists(HALT):
+                deliver(m, now)
+        time.sleep(2)
+
+
+def self_test():
+    seen.clear()
+    hi = {"rule": {"level": 12, "id": "1", "description": "x"}, "agent": {"name": "odin"}}
+    assert message({"rule": {"level": 7, "id": "2"}}, 0) is None
+    assert message(hi, 100)[1].startswith("wazuh L12 on odin: x (rule 1)")
+    deliver(message(hi, 100), 100, lambda t: False)       # the send failed ...
+    assert message(hi, 150) is not None                   # ... so the next one is not suppressed
+    deliver(message(hi, 150), 150, lambda t: True)
+    assert message(hi, 200) is None                       # deduped inside the hour after a good send
+    assert message(dict(hi, agent={"name": "thor"}), 200)  # another agent is another pair
+    assert message(hi, 150 + QUIET_SECONDS) is not None   # sent again after the hour
+    assert handle("not json", 0) is None and handle('{"rule": "odd"}', 0) is None and handle("[]", 0) is None
+
+    def alert(n):
+        return json.dumps({"rule": {"level": 13, "id": str(n), "description": f"a{n}"}, "agent": {"name": "h"}}) + "\n"
+
+    with tempfile.TemporaryDirectory() as d:
+        p = os.path.join(d, "alerts.json")
+        fol = Follower(p)
+        assert fol.lines() == []                            # missing at start: waits
+        with open(p, "w") as f:
+            f.write(alert(1))
+        assert [json.loads(x)["rule"]["id"] for x in fol.lines()] == ["1"]   # appeared later: read from its start
+        fol = Follower(p)                                   # a restart: the history is skipped
+        assert fol.lines() == []
+        with open(p, "a") as f:
+            f.write(alert(2) + alert(3)[:20])               # one whole line and half of the next
+        assert [json.loads(x)["rule"]["id"] for x in fol.lines()] == ["2"]
+        with open(p, "a") as f:
+            f.write(alert(3)[20:])
+        assert [json.loads(x)["rule"]["id"] for x in fol.lines()] == ["3"]
+        os.rename(p, p + ".1")                              # rotation: the manager moves the file away ...
+        with open(p + ".1", "a") as f:
+            f.write(alert(4))                               # ... a last line still lands in the old one ...
+        with open(p, "w") as f:
+            f.write(alert(5))                               # ... and a new file starts
+        assert [json.loads(x)["rule"]["id"] for x in fol.lines()] == ["4", "5"]
+        with open(p, "w") as f:
+            f.write("")                                     # truncated in place
+        assert fol.lines() == []
+        with open(p, "a") as f:
+            f.write(alert(6))
+        got = [json.loads(x)["rule"]["id"] for x in fol.lines()]
+        assert got == ["6"], got
+    print("wazuh-tg self-test: ok")
+
+
+if __name__ == "__main__":
+    args = sys.argv[1:]
+    if args == ["--self-test"]:
+        self_test()
+    elif len(args) == 2 and args[0] == "--alerts":
+        follow(args[1])
+    elif not args:
+        follow(ALERTS)
+    else:
+        sys.exit("usage: wazuh-tg [--alerts PATH | --self-test]")

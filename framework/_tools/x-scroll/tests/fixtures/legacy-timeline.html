@@ -1,0 +1,23 @@
+<main><div data-testid="primaryColumn">
+<nav><a data-testid="AppTabBar_Profile_Link" href="/me">Profile</a><a href="/notifications">Notifications</a></nav>
+<article data-testid="tweet">
+  <a href="/alice"><span data-testid="socialContext">Alice reposted</span></a>
+  <div data-testid="User-Name"><a href="/bob"><span>Bob <img alt="🚀"></span></a><a href="/bob"><span>@bob</span></a></div>
+  <a href="/bob/status/1846000000000000000"><time datetime="2024-10-15T12:00:00.000Z">Oct 15</time></a>
+  <div data-testid="tweetText" lang="en"><span>New release </span><img alt="🎉"><a href="https://t.co/abc">github.com/bob/tool…</a> <a href="/carol">@carol</a></div>
+  <a data-testid="tweet-text-show-more-link" href="/bob/status/1846000000000000000">Show more</a>
+  <div role="link"><div data-testid="User-Name"><span>Carol</span><span>@carol</span></div>
+    <time datetime="2024-10-14T00:00:00.000Z">Oct 14</time><div data-testid="tweetText">quoted words</div></div>
+  <div data-testid="tweetPhoto"><img alt="a cat on a desk" src="https://pbs.twimg.com/media/x.jpg"></div>
+  <div role="group" aria-label="12 replies, 3 reposts, 1,204 likes, 7 bookmarks, 45678 views">
+    <button data-testid="reply" aria-label="12 Replies. Reply">12</button></div>
+</article>
+<article data-testid="tweet">
+  <div data-testid="socialContext">Pinned</div>
+  <div data-testid="User-Name"><a href="/dave"><span>Dave</span></a><a href="/dave"><span>@dave</span></a></div>
+  <a href="/dave/status/1846000000000000001"><time datetime="2024-10-01T00:00:00.000Z">Oct 1</time></a>
+  <div data-testid="tweetText">pinned post, mentions rate limit exceeded in text only</div>
+  <div><span>Ad</span></div>
+  <button data-testid="like" aria-label="5 Likes. Like">5</button>
+</article>
+</div></main>

@@ -1,0 +1,65 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 560" width="960" height="560" role="img" aria-labelledby="title desc" font-family="ui-sans-serif, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif">
+  <title id="title">Safety layers</title>
+  <desc id="desc">Every agent action passes seven stacked safety layers: a secret firewall hook that catches keys and tokens, a credential guard that keeps passwords out of chat and logs, a laptop model-heat guard that pauses local models before a laptop overheats, a public-push gate (gitleaks plus a personal-data denylist) that fails closed, a HALT kill-switch that stops every automation, a no-sends rule where agents only write drafts, and data tiers that keep private data on local models. If a check cannot run, the action is blocked.</desc>
+  <defs>
+    <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerUnits="userSpaceOnUse" markerWidth="12" markerHeight="12" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#f87171"/></marker>
+    <g id="bar">
+      <rect width="646" height="54" rx="12" fill="#f87171" fill-opacity="0.08" stroke="#f87171" stroke-opacity="0.75" stroke-width="1.5"/>
+      <rect x="0" y="12" width="5" height="30" rx="2.5" fill="#f87171"/>
+      <rect x="566" y="16" width="66" height="22" rx="11" fill="#0f172a" stroke="#f87171" stroke-opacity="0.75"/>
+    </g>
+  </defs>
+  <rect width="960" height="560" rx="20" fill="#0f172a"/>
+
+  <text x="32" y="44" font-size="22" font-weight="700" fill="#f8fafc">Safety layers</text>
+
+  <!-- shield -->
+  <path d="M140,130 L196,152 V204 C196,244 172,272 140,286 C108,272 84,244 84,204 V152 Z" fill="#f87171" fill-opacity="0.14" stroke="#f87171" stroke-width="3" stroke-linejoin="round"/>
+  <path d="M116,206 l16,16 l30,-34" fill="none" stroke="#f8fafc" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="140" y="326" font-size="17" font-weight="700" fill="#f8fafc" text-anchor="middle">Defense in depth</text>
+  <text x="140" y="350" font-size="13" fill="#cbd5e1" text-anchor="middle">every agent action</text>
+  <text x="140" y="368" font-size="13" fill="#cbd5e1" text-anchor="middle">passes all seven layers</text>
+
+  <!-- action arrow -->
+  <line x1="270" y1="80" x2="270" y2="502" stroke="#f87171" stroke-width="2" marker-end="url(#ah)"/>
+  <text x="258" y="291" font-size="13" fill="#fca5a5" text-anchor="middle" transform="rotate(-90 258 291)">agent action flows through each layer</text>
+
+  <!-- bars -->
+  <use href="#bar" x="290" y="78"/>
+  <use href="#bar" x="290" y="140"/>
+  <use href="#bar" x="290" y="202"/>
+  <use href="#bar" x="290" y="264"/>
+  <use href="#bar" x="290" y="326"/>
+  <use href="#bar" x="290" y="388"/>
+  <use href="#bar" x="290" y="450"/>
+
+  <g font-size="14" font-weight="700" fill="#f8fafc">
+    <text x="310" y="110">Secret firewall hook</text>
+    <text x="310" y="172">Credential guard</text>
+    <text x="310" y="234">Laptop model-heat guard</text>
+    <text x="310" y="296">Public-push gate</text>
+    <text x="310" y="358">HALT kill-switch</text>
+    <text x="310" y="420">“No sends” rule</text>
+    <text x="310" y="482">Data tiers</text>
+  </g>
+  <g font-size="13" fill="#cbd5e1">
+    <text x="512" y="110">catches keys and tokens before they leak</text>
+    <text x="512" y="172">keeps passwords out of chat and logs</text>
+    <text x="512" y="234">pauses local models before a laptop overheats</text>
+    <text x="512" y="296">secret scan + denylist + review; fails closed</text>
+    <text x="512" y="358">one switch stops every automation</text>
+    <text x="512" y="420">agents write drafts; you press send</text>
+    <text x="512" y="482">private data only goes to local models</text>
+  </g>
+  <g font-size="13" fill="#fca5a5" text-anchor="middle">
+    <text x="889" y="110">hook</text>
+    <text x="889" y="172">hook</text>
+    <text x="889" y="234">guard</text>
+    <text x="889" y="296">git gate</text>
+    <text x="889" y="358">switch</text>
+    <text x="889" y="420">rule</text>
+    <text x="889" y="482">routing</text>
+  </g>
+
+  <text x="480" y="538" font-size="14" fill="#94a3b8" text-anchor="middle">Fail closed: if a check can't run, the action is blocked, never waved through.</text>
+</svg>

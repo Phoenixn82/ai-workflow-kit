@@ -1,0 +1,22 @@
+{
+  "name": "telegram",
+  "role": "add-on for any profile: alerts in Telegram, one group per topic",
+  "for": "anyone who wants phone alerts in Telegram instead of (or beside) ntfy; only heat alerts make a sound",
+  "addon": true,
+  "os": [
+    "arch",
+    "debian",
+    "macos"
+  ],
+  "tools": [
+    "python3",
+    "uv",
+    "telegram-desktop",
+    "tg",
+    "tg-admin"
+  ],
+  "services": [],
+  "automations": [],
+  "rules": [],
+  "requires_hardware": {}
+}

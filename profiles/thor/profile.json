@@ -1,0 +1,96 @@
+{
+  "name": "thor",
+  "role": "heavy local AI box: Ollama on the GPU, Whisper, the backup target; sleeps when idle",
+  "for": "anyone with a GPU desktop (NVIDIA 8 GB+) or an Apple-silicon Mac (16 GB+) who wants local models and heavy jobs off their laptop",
+  "addon": false,
+  "os": [
+    "debian",
+    "macos"
+  ],
+  "tools": [
+    "git",
+    "python3",
+    "uv",
+    "node",
+    "jq",
+    "tailscale",
+    "docker",
+    "restic",
+    "samba",
+    "smartmontools",
+    "ollama",
+    "faster-whisper",
+    "freellmapi",
+    "server-lane-thor",
+    "disk-probe",
+    "thor-sleep",
+    "luks-unlock",
+    "ssh-keylog",
+    "media-backup",
+    "immich"
+  ],
+  "services": [
+    {
+      "name": "ollama",
+      "kind": "systemd",
+      "tool": "ollama",
+      "unit": "ollama.service",
+      "scope": "system",
+      "health": "curl -fsS http://127.0.0.1:11434/api/version",
+      "optional": false,
+      "linux_only": true
+    },
+    {
+      "name": "freellmapi",
+      "kind": "systemd",
+      "tool": "freellmapi",
+      "unit": "freellmapi.service",
+      "scope": "user",
+      "health": "systemctl --user is-active --quiet freellmapi.service",
+      "optional": true,
+      "linux_only": true
+    }
+  ],
+  "automations": [
+    {
+      "name": "thor-sleep",
+      "tool": "thor-sleep",
+      "unit": "framework/_tools/fleet-wake/thor/thor-sleep.timer",
+      "files": [
+        "framework/_tools/fleet-wake/thor/thor-sleep.service",
+        "framework/_tools/fleet-wake/thor/thor-sleep.timer"
+      ],
+      "scope": "system",
+      "enable": false,
+      "linux_only": true,
+      "kill_switch": "sudo touch /etc/thor-sleep.disable (thor never auto-sleeps), or sudo systemctl disable --now thor-sleep.timer"
+    },
+    {
+      "name": "disk-probe",
+      "tool": "disk-probe",
+      "unit": "framework/_tools/fleet-probes/units/disk-probe.timer",
+      "files": [
+        "framework/_tools/fleet-probes/units/disk-probe.service",
+        "framework/_tools/fleet-probes/units/disk-probe.timer"
+      ],
+      "scope": "user",
+      "enable": false,
+      "kill_switch": "touch ~/.local/state/disk-probe/HALT, or systemctl --user disable --now disk-probe.timer",
+      "linux_only": true
+    }
+  ],
+  "rules": [],
+  "requires_hardware": {
+    "ram_gb": 16,
+    "any_of": [
+      {
+        "gpu": "nvidia",
+        "vram_gb": 8
+      },
+      {
+        "cpu": "apple-silicon",
+        "unified_memory_gb": 16
+      }
+    ]
+  }
+}

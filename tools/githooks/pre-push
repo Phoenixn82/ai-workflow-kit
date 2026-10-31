@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+# 1) Rescan what this push sends (r1 #2): every commit the remote does not have yet, with the current rules
+#    (tools/check-commits.sh: emails, messages, changed files, gitleaks). A hit blocks the push.
+# 2) core.hooksPath=tools/githooks replaces a global hooks path for this repo; keep its pre-push (e.g. a public-push
+#    gate) running by chaining to it with the same arguments and stdin. No global hooks path set: nothing to chain.
+set -euo pipefail
+top=$(git rev-parse --show-toplevel)
+input=$(cat)
+tips=()
+while read -r _local_ref local_sha _remote_ref _remote_sha; do
+  [[ -z ${local_sha:-} || $local_sha =~ ^0+$ ]] && continue      # a branch deletion sends no commits
+  tips+=("$local_sha")
+done <<< "$input"
+if [[ ${#tips[@]} -gt 0 ]]; then
+  "$top/tools/check-commits.sh" "${tips[@]}" --not --remotes="${1:?}" ||
+    { echo "[kit pre-push] BLOCKED: fix the commits above (rewrite them; they are not on the remote yet)" >&2; exit 1; }
+fi
+
+global=$(git config --global --get core.hooksPath 2>/dev/null || true)
+[[ -n $global ]] || exit 0
+[[ $global == "~/"* ]] && global="$HOME/${global#\~/}"
+hook="$global/pre-push"
+here=$(cd "$(dirname -- "$0")" && pwd -P)
+[[ -f $hook ]] || exit 0
+[[ "$(cd "$(dirname -- "$hook")" && pwd -P)" == "$here" ]] && exit 0
+if [[ -n $input ]]; then exec "$hook" "$@" <<< "$input"; else exec "$hook" "$@" < /dev/null; fi

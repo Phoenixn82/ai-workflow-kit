@@ -1,0 +1,590 @@
+{
+  "version": 1,
+  "updated_at": "2026-10-05",
+  "policy": {
+    "goal": "Make Claude-dispatched tool requests safe for Codex by checking parity before accepting the task.",
+    "repair_order": [
+      "codex_native_tool",
+      "codex_plugin",
+      "codex_skill",
+      "cli",
+      "printing_press_cli",
+      "mcp_bridge",
+      "claude_only_handback"
+    ],
+    "never_do": [
+      "pretend a Claude-only tool is callable from Codex",
+      "install paid APIs or metered services without explicit free/no-cost confirmation",
+      "create direct-session Claude handoff files unless the user asks"
+    ]
+  },
+  "priority_tools": [
+    {
+      "name": "printing-press",
+      "aliases": [
+        "printing-press",
+        "printing-press-router",
+        "pp-cli",
+        "cli-printing-press"
+      ],
+      "claude_skill_prefixes": [
+        "printing-press-router"
+      ],
+      "codex_skill_prefixes": [
+        "printing-press-router"
+      ],
+      "commands": [
+        "printing-press",
+        "go"
+      ],
+      "mcp_names": [],
+      "repair_hint": "Go is required for Printing Press Go CLIs. Install Go or configure a bundled Go path, then install/generate PP CLIs."
+    },
+    {
+      "name": "browser",
+      "aliases": [
+        "browser",
+        "in-app browser",
+        "gstack",
+        "chrome-devtools",
+        "playwright"
+      ],
+      "claude_skill_prefixes": [
+        "gstack",
+        "open-gstack-browser",
+        "setup-browser-cookies"
+      ],
+      "codex_skill_prefixes": [
+        "browser:control-in-app-browser"
+      ],
+      "codex_plugins": [
+        "browser@openai-bundled"
+      ],
+      "commands": [
+        "chrome",
+        "msedge"
+      ],
+      "mcp_names": [
+        "chrome-devtools",
+        "node_repl"
+      ],
+      "repair_hint": "Follow web skill routing. Codex now has pinned chrome-devtools MCP 1.9.0 configured with an isolated headless browser and usage statistics disabled. A new Codex session is required to expose it. Never attach personal browser profiles."
+    },
+    {
+      "name": "github",
+      "aliases": [
+        "github",
+        "gh",
+        "pull request",
+        "issues"
+      ],
+      "claude_skill_prefixes": [
+        "github",
+        "gh-",
+        "ship"
+      ],
+      "codex_skill_prefixes": [
+        "github:"
+      ],
+      "codex_plugins": [
+        "github@openai-curated-remote"
+      ],
+      "commands": [
+        "gh"
+      ],
+      "mcp_names": [
+        "github"
+      ],
+      "repair_hint": "Use the GitHub CLI (`gh`, keyring-authed as <your-github>; works for Claude and Codex alike); the Codex github@openai-curated-remote connector is the secondary route."
+    },
+    {
+      "name": "vercel",
+      "aliases": [
+        "vercel",
+        "deploy",
+        "deployment",
+        "vercel-plugin"
+      ],
+      "claude_skill_prefixes": [
+        "land-and-deploy",
+        "setup-deploy"
+      ],
+      "codex_skill_prefixes": [
+        "vercel-plugin:"
+      ],
+      "codex_plugins": [
+        "vercel-plugin@plugins-cli",
+        "vercel@openai-curated-remote"
+      ],
+      "commands": [
+        "vercel"
+      ],
+      "npx_packages": [
+        "vercel"
+      ],
+      "mcp_names": [
+        "vercel"
+      ],
+      "repair_hint": "Use the official npx route (`npx -y vercel@latest <cmd> --scope <your-team>`)."
+    },
+    {
+      "name": "supabase",
+      "aliases": [
+        "supabase",
+        "database"
+      ],
+      "claude_skill_prefixes": [],
+      "codex_skill_prefixes": [],
+      "commands": [
+        "supabase"
+      ],
+      "npx_packages": [
+        "supabase"
+      ],
+      "mcp_names": [
+        "supabase"
+      ],
+      "repair_hint": "Use the official npx route (`npx supabase ...`) or install the standalone/Scoop CLI. Do not use unsupported global npm install."
+    },
+    {
+      "name": "obsidian",
+      "aliases": [
+        "obsidian",
+        "second-brain",
+        "vault",
+        "memory"
+      ],
+      "claude_skill_prefixes": [
+        "obsidian-second-brain",
+        "learn",
+        "context-save",
+        "context-restore"
+      ],
+      "codex_skill_prefixes": [
+        "second-brain"
+      ],
+      "commands": [],
+      "mcp_names": [
+        "obsidian",
+        "obsidian-vault"
+      ],
+      "repair_hint": "Codex can write the local markdown vault directly. MCP parity is optional; do not dump non-durable session logs."
+    },
+    {
+      "name": "gemini",
+      "aliases": [
+        "gemini",
+        "large context",
+        "video multimodal"
+      ],
+      "claude_skill_prefixes": [
+        "gemini"
+      ],
+      "codex_skill_prefixes": [],
+      "commands": [],
+      "mcp_names": [
+        "gemini"
+      ],
+      "repair_hint": "Codex should use the local Gemini MCP bridge when configured; otherwise hand back Gemini-only long-context tasks."
+    },
+    {
+      "name": "google-workspace",
+      "aliases": [
+        "gmail",
+        "google-drive",
+        "google-calendar",
+        "sheets",
+        "docs"
+      ],
+      "claude_skill_prefixes": [],
+      "codex_skill_prefixes": [
+        "spreadsheets:",
+        "documents:"
+      ],
+      "codex_plugins": [
+        "documents@openai-primary-runtime",
+        "spreadsheets@openai-primary-runtime",
+        "google-drive@openai-curated-remote",
+        "google-calendar@openai-curated-remote"
+      ],
+      "commands": [],
+      "mcp_names": [
+        "gmail",
+        "google-drive",
+        "google-calendar"
+      ],
+      "repair_hint": "Use document/spreadsheet plugins for local files. Mail connectors draft only, never send."
+    },
+    {
+      "name": "openai-sites",
+      "aliases": [
+        "sites",
+        "openai sites",
+        "codex sites"
+      ],
+      "claude_skill_prefixes": [],
+      "codex_skill_prefixes": [
+        "sites"
+      ],
+      "codex_plugins": [
+        "sites@openai-bundled"
+      ],
+      "commands": [],
+      "mcp_names": [],
+      "repair_hint": "Use the installed Sites plugin for site builds and hosting; keep project-orchestrator for multi-mechanic projects."
+    },
+    {
+      "name": "web",
+      "aliases": [
+        "web",
+        "web read",
+        "web act",
+        "web login",
+        "web handoff",
+        "scrape",
+        "scraping",
+        "webcred"
+      ],
+      "claude_skill_prefixes": [
+        "web"
+      ],
+      "codex_skill_prefixes": [
+        "web"
+      ],
+      "commands": [
+        "web"
+      ],
+      "file_paths": [
+        "~/.codex/skills/web",
+        "$HOME/AI_Projects/_tools/web/skill/SKILL.md"
+      ],
+      "mcp_names": [],
+      "repair_hint": "Use the web CLI and its mirrored Codex skill; do not invoke browser automation or scraping tools directly."
+    },
+    {
+      "name": "motion",
+      "aliases": [
+        "motion",
+        "motion graphics",
+        "motion design",
+        "launch video",
+        "showreel",
+        "product reel",
+        "animated explainer",
+        "motion ad",
+        "kinetic type",
+        "seek(t) render"
+      ],
+      "claude_skill_prefixes": [
+        "motion"
+      ],
+      "codex_skill_prefixes": [
+        "motion"
+      ],
+      "commands": [
+        "motion",
+        "ffmpeg",
+        "node"
+      ],
+      "file_paths": [
+        "~/.codex/skills/motion",
+        "$HOME/AI_Projects/_tools/motion/skill/SKILL.md"
+      ],
+      "mcp_names": [],
+      "repair_hint": "Shared lane: skill symlinked into ~/.claude/skills/motion and ~/.codex/skills/motion; CLI ~/.local/bin/motion -> _tools/motion/bin/motion.mjs (run `npm i` in _tools/motion if playwright-core is missing). Smoke test: `npm test` in _tools/motion."
+    },
+    {
+      "name": "lane",
+      "aliases": [
+        "lane",
+        "lane doctor"
+      ],
+      "claude_skill_prefixes": [],
+      "codex_skill_prefixes": [],
+      "commands": [
+        "lane"
+      ],
+      "file_paths": [
+        "~/.local/bin/lane",
+        "$HOME/AI_Projects/_tools/lanes"
+      ],
+      "mcp_names": [],
+      "repair_hint": "Use ~/.local/bin/lane for admitted bounded text work."
+    },
+    {
+      "name": "open-loops",
+      "aliases": [
+        "open-loops",
+        "open loops"
+      ],
+      "claude_skill_prefixes": [],
+      "codex_skill_prefixes": [
+        "open-loops"
+      ],
+      "commands": [
+        "python3"
+      ],
+      "file_paths": [
+        "$HOME/AI_Projects/_tools/open-loops/prep.py",
+        "$HOME/AI_Projects/_tools/open-loops/close.py",
+        "$HOME/AI_Projects/.claude/workflows/open-loops.js"
+      ],
+      "mcp_names": [],
+      "repair_hint": "Claude drives the Workflow; Codex executes only dispatched items."
+    },
+    {
+      "name": "handoff-v2",
+      "aliases": [
+        "handoff-v2",
+        "handoff v2"
+      ],
+      "claude_skill_prefixes": [],
+      "codex_skill_prefixes": [
+        "handoff"
+      ],
+      "commands": [
+        "python3"
+      ],
+      "file_paths": [
+        "$HOME/AI_Projects/pipeline/handoff-v2"
+      ],
+      "mcp_names": [],
+      "repair_hint": "Use python3 -m handoff.cli; do not run production hooks as a parity check."
+    },
+    {
+      "name": "freellmapi",
+      "aliases": [
+        "freellmapi",
+        "free llm api"
+      ],
+      "claude_skill_prefixes": [],
+      "codex_skill_prefixes": [],
+      "commands": [],
+      "endpoint": "http://thor:3001/v1",
+      "mcp_names": [],
+      "repair_hint": "Use the configured HTTP route; credentials are never stored in this registry."
+    },
+    {
+      "name": "computer-use-linux",
+      "aliases": [
+        "computer-use-linux"
+      ],
+      "claude_skill_prefixes": [],
+      "codex_skill_prefixes": [],
+      "commands": [],
+      "mcp_names": [
+        "computer-use-linux"
+      ],
+      "repair_hint": "Use the configured MCP only when the task requires native computer control."
+    },
+    {
+      "name": "desk-control",
+      "aliases": [
+        "desk-control"
+      ],
+      "claude_skill_prefixes": [],
+      "codex_skill_prefixes": [],
+      "commands": [],
+      "mcp_names": [
+        "desk-control"
+      ],
+      "repair_hint": "Use the configured MCP only when the task requires native computer control."
+    },
+    {
+      "name": "firefox-devtools",
+      "aliases": [
+        "firefox-devtools"
+      ],
+      "claude_skill_prefixes": [],
+      "codex_skill_prefixes": [],
+      "commands": [],
+      "mcp_names": [
+        "firefox-devtools"
+      ],
+      "repair_hint": "Use the configured Firefox DevTools MCP when it is exposed."
+    },
+    {
+      "name": "vault-rag",
+      "aliases": [
+        "vault-rag"
+      ],
+      "claude_skill_prefixes": [],
+      "codex_skill_prefixes": [],
+      "commands": [],
+      "mcp_names": [
+        "vault-rag"
+      ],
+      "repair_hint": "Use the configured vault-rag MCP for vault retrieval."
+    },
+    {
+      "name": "herdr",
+      "aliases": [
+        "herdr"
+      ],
+      "claude_skill_prefixes": [],
+      "codex_skill_prefixes": [],
+      "commands": [],
+      "mcp_names": [
+        "herdr"
+      ],
+      "repair_hint": "Use the configured herdr MCP when it is exposed."
+    },
+    {
+      "name": "scrapling (superseded)",
+      "aliases": [
+        "scrapling",
+        "free local scrape",
+        "adaptive scrape"
+      ],
+      "claude_skill_prefixes": [
+        "web"
+      ],
+      "codex_skill_prefixes": [
+        "web"
+      ],
+      "mcp_names": [],
+      "superseded_by": "web",
+      "repair_hint": "Superseded by web; use web scrape rather than a direct Scrapling wrapper."
+    },
+    {
+      "name": "blender-mcp",
+      "aliases": [
+        "blender",
+        "blender-mcp",
+        "3d asset workflow"
+      ],
+      "claude_skill_prefixes": [
+        "design-studio",
+        "build"
+      ],
+      "codex_skill_prefixes": [],
+      "commands": [
+        "blender"
+      ],
+      "mcp_names": [
+        "blender"
+      ],
+      "repair_hint": "Use only when Blender is installed/running and the blender-mcp bridge is exposed. Otherwise report that the GUI/socket is not ready."
+    },
+    {
+      "name": "ltx-2",
+      "aliases": [
+        "ltx2",
+        "ltx-2",
+        "ai video generation"
+      ],
+      "claude_skill_prefixes": [],
+      "codex_skill_prefixes": [],
+      "commands": [
+        "ltx2"
+      ],
+      "mcp_names": [],
+      "repair_hint": "Use the local ltx2 workflow command only when models/GPU path are ready. Do not download weights or spend GPU without explicit ask."
+    },
+    {
+      "name": "voicebox",
+      "aliases": [
+        "voicebox",
+        "voiceover",
+        "local narration"
+      ],
+      "claude_skill_prefixes": [
+        "content-forge"
+      ],
+      "codex_skill_prefixes": [],
+      "commands": [
+        "voicebox"
+      ],
+      "mcp_names": [],
+      "repair_hint": "Content-forge writes the script first; use voicebox only as an explicit audio render helper when available."
+    },
+    {
+      "name": "get-windows (superseded)",
+      "aliases": [
+        "get-windows",
+        "active window metadata",
+        "foreground window"
+      ],
+      "claude_skill_prefixes": [],
+      "codex_skill_prefixes": [],
+      "superseded_by": "computer-use-linux",
+      "commands": [],
+      "mcp_names": [
+        "computer-use-linux"
+      ],
+      "repair_hint": "Superseded by computer-use-linux; do not use Windows-specific window inspection."
+    },
+    {
+      "name": "rclone",
+      "aliases": [
+        "rclone",
+        "cloud sync",
+        "gdrive",
+        "google drive sync"
+      ],
+      "claude_skill_prefixes": [],
+      "codex_skill_prefixes": [],
+      "commands": [
+        "rclone"
+      ],
+      "mcp_names": [],
+      "repair_hint": "rclone is a native CLI on both Claude and Codex sessions (pacman-installed on odin); no bridge needed."
+    },
+    {
+      "name": "yt-dlp",
+      "aliases": [
+        "yt-dlp",
+        "youtube-dl",
+        "video download"
+      ],
+      "claude_skill_prefixes": [],
+      "codex_skill_prefixes": [],
+      "commands": [
+        "yt-dlp"
+      ],
+      "mcp_names": [],
+      "repair_hint": "yt-dlp is a native CLI on both Claude and Codex sessions (pacman-installed on odin); no bridge needed."
+    },
+    {
+      "name": "cdrskin",
+      "aliases": [
+        "cdrskin",
+        "cd burn",
+        "cd-text burn",
+        "xorriso"
+      ],
+      "claude_skill_prefixes": [],
+      "codex_skill_prefixes": [],
+      "commands": [
+        "cdrskin"
+      ],
+      "mcp_names": [],
+      "repair_hint": "cdrskin is a native CLI on both Claude and Codex sessions (pacman-installed on odin); no bridge needed. cd-info (libcdio) is the paired TOC-readback tool for post-burn verification."
+    },
+    {
+      "name": "fleet",
+      "aliases": [
+        "fleet",
+        "ssh",
+        "heimdall",
+        "thor",
+        "loki",
+        "raven"
+      ],
+      "claude_skill_prefixes": [
+        "herdr"
+      ],
+      "codex_skill_prefixes": [],
+      "commands": [
+        "ssh",
+        "herdr",
+        "tailscale"
+      ],
+      "file_paths": [
+        "$HOME/AI_Projects/_system/second-brain/Reference/fleet-access.md"
+      ],
+      "mcp_names": [],
+      "repair_hint": "Use the named SSH aliases (Tailscale SSH, batch mode) per Reference/fleet-access.md. Waking or restarting a host is user-gated."
+    }
+  ]
+}

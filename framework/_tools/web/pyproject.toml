@@ -1,0 +1,21 @@
+[project]
+name = "web"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = ["markdownify>=0.13", "trafilatura>=2.0", "jsonschema>=4", "websockets>=13", "beautifulsoup4>=4.12",
+                "defusedxml>=0.7"]
+
+[project.scripts]
+web = "web.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[dependency-groups]
+dev = ["pytest>=8"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+markers = ["live: needs the installed courier and the identity browser (opt in with WEB_LIVE=1)"]

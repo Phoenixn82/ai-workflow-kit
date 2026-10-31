@@ -1,0 +1,190 @@
+{
+  "name": "odin",
+  "role": "the cockpit: your daily computer, where Claude Code and Codex run",
+  "for": "anyone who wants the full agent setup: hooks that fail closed, a secret firewall, lanes and routes, the web CLI, a self-writing vault with search, and session handoffs",
+  "addon": false,
+  "os": [
+    "arch",
+    "debian",
+    "macos"
+  ],
+  "tools": [
+    "git",
+    "python3",
+    "uv",
+    "node",
+    "mise",
+    "jq",
+    "bubblewrap",
+    "ripgrep",
+    "openssh",
+    "tailscale",
+    "claude",
+    "codex",
+    "gemini",
+    "herdr",
+    "gh",
+    "gitleaks",
+    "betterleaks",
+    "chromium",
+    "agent-browser",
+    "scrapling",
+    "yt-dlp",
+    "ffmpeg",
+    "computer-use-linux",
+    "firefox-devtools-mcp",
+    "chrome-devtools-mcp",
+    "superpowers",
+    "ponytail",
+    "frontend-design",
+    "impeccable",
+    "obsidian",
+    "restic",
+    "workspace",
+    "hosts-env",
+    "vault",
+    "route",
+    "cx",
+    "thor-up",
+    "claude-harness",
+    "codex-harness",
+    "guard-gate",
+    "kit-skills",
+    "handoff-v2",
+    "vault-rag",
+    "vault-lint",
+    "harness-lint",
+    "web",
+    "lane",
+    "weekly-review",
+    "retention",
+    "agents-slice",
+    "review-queue",
+    "desk-control",
+    "motion",
+    "jev-browse",
+    "lane-intel",
+    "x-scroll",
+    "secret-firewall-corpus",
+    "secret-scrub",
+    "transcript-prune",
+    "open-loops",
+    "hermes",
+    "helper-wall",
+    "hermes-kit",
+    "thor-wake-proxy",
+    "hermes-loki-gate",
+    "loki-desk-cockpit",
+    "luks-unlock",
+    "ssh-keylog"
+  ],
+  "services": [],
+  "automations": [
+    {
+      "name": "vault-rag-reindex",
+      "tool": "vault-rag",
+      "unit": "framework/_tools/vault-rag/systemd/vault-rag-reindex.timer",
+      "files": [
+        "framework/_tools/vault-rag/systemd/vault-rag-reindex.service",
+        "framework/_tools/vault-rag/systemd/vault-rag-reindex.timer"
+      ],
+      "scope": "user",
+      "enable": false,
+      "kill_switch": "touch ~/AI_Projects/_system/automations/HALT (stops every job), or systemctl --user disable --now vault-rag-reindex.timer",
+      "linux_only": true
+    },
+    {
+      "name": "weekly-review",
+      "tool": "weekly-review",
+      "unit": "framework/_tools/weekly-review/units/weekly-review.timer",
+      "files": [
+        "framework/_tools/weekly-review/units/weekly-review.service",
+        "framework/_tools/weekly-review/units/weekly-review.timer"
+      ],
+      "scope": "user",
+      "enable": false,
+      "kill_switch": "touch ~/AI_Projects/_system/automations/HALT, or systemctl --user disable --now weekly-review.timer",
+      "linux_only": true
+    },
+    {
+      "name": "retain",
+      "tool": "retention",
+      "unit": "framework/_tools/retention/units/retain.timer",
+      "files": [
+        "framework/_tools/retention/units/retain.service",
+        "framework/_tools/retention/units/retain.timer"
+      ],
+      "scope": "user",
+      "enable": false,
+      "kill_switch": "touch ~/AI_Projects/_system/automations/HALT, or systemctl --user disable --now retain.timer",
+      "linux_only": true
+    },
+    {
+      "name": "lane-intel",
+      "tool": "lane-intel",
+      "unit": "framework/_tools/lane-intel/units/lane-intel.timer",
+      "files": [
+        "framework/_tools/lane-intel/units/lane-intel.service",
+        "framework/_tools/lane-intel/units/lane-intel.timer"
+      ],
+      "scope": "user",
+      "enable": false,
+      "kill_switch": "touch ~/AI_Projects/_system/automations/HALT, or systemctl --user disable --now lane-intel.timer",
+      "linux_only": true
+    },
+    {
+      "name": "x-scroll",
+      "tool": "x-scroll",
+      "unit": "framework/_tools/x-scroll/units/x-scroll.timer",
+      "files": [
+        "framework/_tools/x-scroll/units/x-scroll.service",
+        "framework/_tools/x-scroll/units/x-scroll.timer"
+      ],
+      "scope": "user",
+      "enable": false,
+      "kill_switch": "touch ~/AI_Projects/_system/automations/HALT, or systemctl --user disable --now x-scroll.timer",
+      "linux_only": true
+    }
+  ],
+  "rules": [
+    {
+      "src": "framework/harness/CLAUDE.global.md",
+      "dest": "~/.claude/CLAUDE.md",
+      "how": "merge-markdown",
+      "tool": "claude-harness"
+    },
+    {
+      "src": "framework/harness/settings.reference.json",
+      "dest": "~/.claude/settings.json",
+      "how": "merge-json",
+      "tool": "claude-harness"
+    },
+    {
+      "src": "framework/CLAUDE.md",
+      "dest": "~/AI_Projects/CLAUDE.md",
+      "how": "merge-markdown",
+      "tool": "workspace"
+    },
+    {
+      "src": "framework/AGENTS.md",
+      "dest": "~/AI_Projects/AGENTS.md",
+      "how": "merge-markdown",
+      "tool": "workspace"
+    },
+    {
+      "src": "framework/harness/codex/AGENTS.md",
+      "dest": "~/.codex/AGENTS.md",
+      "how": "merge-markdown",
+      "tool": "codex-harness"
+    },
+    {
+      "src": "framework/harness/codex/hooks.json",
+      "dest": "~/.codex/hooks.json",
+      "how": "merge-json",
+      "tool": "codex-harness"
+    }
+  ],
+  "requires_hardware": {
+    "ram_gb": 8
+  }
+}

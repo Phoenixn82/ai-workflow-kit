@@ -1,0 +1,5 @@
+#!/bin/bash
+set -f
+# odin auto-sleeps when idle; wake it first (instant when it's already up).
+"$HOME/.local/bin/odin-up" || exit 5
+exec ssh -o BatchMode=yes odin -- web $(printf '%q ' "$@")

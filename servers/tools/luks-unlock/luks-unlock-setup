@@ -1,0 +1,155 @@
+#!/usr/bin/env bash
+# luks-unlock-setup: give the scheduler box (heimdall) its own LUKS key slot on this machine's encrypted root disk,
+# so heimdall's fleet-wake can unlock it at boot over the LAN (ssh into the boot image). Run it once, on the machine
+# whose disk gets unlocked, from a terminal as your own user with sudo. It prompts once for the current disk password.
+#
+#   luks-unlock-setup [--name odin] [--scheduler heimdall] [--unlock-host <address>] [--device /dev/...] [--dry-run]
+#   luks-unlock-setup --undo [--name odin] [--scheduler heimdall] [--device /dev/...] [--slot N]
+#   luks-unlock-setup --self-test
+#
+#   --name         the name fleet-wake knows this machine by (odin or thor). Default: the short hostname.
+#   --scheduler    the ssh host (as YOUR user's ~/.ssh/config knows it) that runs fleet-wake. Default: heimdall.
+#   --unlock-host  the LAN address the boot image answers ssh on (<NAME>_UNLOCK_HOST in hosts.env). Given, or found
+#                  in your ~/.config/ai-workflow-kit/hosts.env, it pins the boot image's host keys on the scheduler.
+#   --device       the LUKS partition. Default: the one under / (found with lsblk).
+#   --slot N       with --undo: kill this key slot instead of the one the scheduler's key opens.
+#
+# What it does: 1) backs up the LUKS header to /root/luks-header-<mapping>-<date>.img, 2) makes a random 64-character
+# key in RAM (/dev/shm), 3) adds it as a new key slot (asks for your current disk password), 4) tests the new slot the
+# way the unlock sends it (on stdin, ended by a newline), 5) copies it to the scheduler at
+# ~/.config/fleet-wake/<name>.luks (mode 600) and checks the copy, 6) pins the boot image's host keys in the
+# scheduler's ~/.config/fleet-wake/unlock_known_hosts. The key never touches this machine's disk.
+# Docs, the boot-image ssh setup and the security trade-off: servers/tools/luks-unlock/README.md.
+set -euo pipefail
+
+NAME="" SCHED=heimdall UNLOCK_HOST="" DEV="" SLOT="" UNDO=0 DRY=0
+ARGS=("$@")
+
+key_ok() { [[ ${#1} -eq 64 && $1 =~ ^[A-Za-z0-9]+$ ]]; }
+# "Key slot 3 unlocked." (cryptsetup -v) -> 3
+slot_of() { sed -n 's/^Key slot \([0-9][0-9]*\) unlocked.*/\1/p' | head -n1; }
+# lsblk -nrso NAME,TYPE <root source> lists the device and its parents; the first crypt one is the LUKS mapping
+crypt_of() { awk '$2=="crypt"{print $1; exit}'; }
+new_key() { head -c 48 /dev/urandom | base64 -w0 | tr '+/' 'xy'; }   # 64 chars, no newline
+# value of KEY in a hosts.env file (last one wins, quotes stripped)
+env_val() { [ -r "$2" ] || return 0; sed -n "s/^$1=//p" "$2" | tail -n1 | tr -d "\"'"; }   # no file: empty
+
+if [ "${1:-}" = --self-test ]; then
+  fail() { echo "luks-unlock-setup self-test: FAIL $*"; exit 1; }
+  k=$(new_key); key_ok "$k" || fail "key '$k'"
+  [ "$(new_key)" != "$k" ] || fail "two keys alike"
+  key_ok "short" && fail "short key accepted"
+  [ "$(printf 'No usable token.\nKey slot 3 unlocked.\nCommand successful.\n' | slot_of)" = 3 ] || fail slot
+  [ -z "$(printf 'No key available with this passphrase.\n' | slot_of)" ] || fail "slot on a wrong key"
+  [ "$(printf 'root[/@] \nroot crypt\nnvme0n1p2 part\nnvme0n1 disk\n' | crypt_of)" = root ] || fail crypt
+  [ "$(printf 'vg-root lvm\nsda3_crypt crypt\nsda3 part\n' | crypt_of)" = sda3_crypt ] || fail "lvm on luks"
+  [ -z "$(printf 'sda1 part\nsda disk\n' | crypt_of)" ] || fail "plain disk"
+  t=$(mktemp); printf 'ODIN_UNLOCK_HOST=192.0.2.1\nODIN_UNLOCK_HOST="192.0.2.5"\n' > "$t"
+  [ "$(env_val ODIN_UNLOCK_HOST "$t")" = 192.0.2.5 ] || fail env; rm -f "$t"
+  echo "luks-unlock-setup self-test: ok"; exit 0
+fi
+
+while [ $# -gt 0 ]; do
+  case $1 in
+    --name) NAME=${2:?}; shift ;;
+    --scheduler) SCHED=${2:?}; shift ;;
+    --unlock-host) UNLOCK_HOST=${2:?}; shift ;;
+    --device) DEV=${2:?}; shift ;;
+    --slot) SLOT=${2:?}; shift ;;
+    --undo) UNDO=1 ;;
+    --dry-run) DRY=1 ;;
+    -h|--help) sed -n '2,25p' "$0"; exit 0 ;;
+    *) echo "luks-unlock-setup: unknown option $1 (see --help)" >&2; exit 2 ;;
+  esac
+  shift
+done
+
+[ "$(id -u)" = 0 ] || exec sudo "$0" "${ARGS[@]}"
+USER_NAME=${SUDO_USER:-}
+[ -n "$USER_NAME" ] && [ "$USER_NAME" != root ] ||
+  { echo "luks-unlock-setup: run it as your own user (it uses sudo and your ssh setup for $SCHED)" >&2; exit 2; }
+USER_HOME=$(getent passwd "$USER_NAME" | cut -d: -f6)
+NAME=${NAME:-$(hostname -s)}
+[[ $NAME =~ ^[a-z0-9-]+$ ]] || { echo "luks-unlock-setup: bad --name '$NAME'" >&2; exit 2; }
+[[ $SCHED =~ ^[A-Za-z0-9._-]+$ ]] || { echo "luks-unlock-setup: bad --scheduler '$SCHED'" >&2; exit 2; }
+case $NAME in odin|thor) ;; *) echo "note: fleet-wake only unlocks odin and thor; '$NAME' gets a key it will not use" >&2 ;; esac
+UNLOCK_KEY=$(echo "$NAME" | tr 'a-z-' 'A-Z_')_UNLOCK_HOST
+[ -n "$UNLOCK_HOST" ] || UNLOCK_HOST=$(env_val "$UNLOCK_KEY" "$USER_HOME/.config/ai-workflow-kit/hosts.env")
+[ -z "$UNLOCK_HOST" ] || [[ $UNLOCK_HOST =~ ^[A-Za-z0-9.:-]+$ ]] ||
+  { echo "luks-unlock-setup: bad unlock host '$UNLOCK_HOST'" >&2; exit 2; }
+REMOTE=".config/fleet-wake/$NAME.luks"
+as_user() { runuser -u "$USER_NAME" -- "$@"; }
+
+if [ -z "$DEV" ]; then
+  src=$(findmnt -no SOURCE / | sed 's/\[.*//')
+  map=$(lsblk -nrso NAME,TYPE "$src" 2>/dev/null | crypt_of)
+  [ -n "$map" ] || { echo "luks-unlock-setup: / is not on a LUKS disk; pass --device" >&2; exit 1; }
+  DEV=$(cryptsetup status "$map" | awk '/device:/{print $2}')
+fi
+if ! { [ -b "$DEV" ] && cryptsetup isLuks "$DEV"; }; then echo "luks-unlock-setup: $DEV is not a LUKS partition" >&2; exit 1; fi
+MAP=$(lsblk -nro NAME,TYPE "$DEV" | crypt_of); MAP=${MAP:-$(basename "$DEV")}
+
+if [ $DRY = 1 ]; then
+  echo "plan for $NAME: device $DEV (mapping $MAP), scheduler $SCHED as $USER_NAME"
+  if [ $UNDO = 1 ]; then
+    echo "  remove the key slot ${SLOT:-that $SCHED:~/$REMOTE opens}, then delete ~/$REMOTE on $SCHED"
+  else
+    echo "  header backup /root/luks-header-$MAP-$(date +%F).img, add a key slot, test it, copy it to $SCHED:~/$REMOTE"
+    echo "  pin boot-image host keys for ${UNLOCK_HOST:-<no --unlock-host: skipped>}"
+  fi
+  exit 0
+fi
+
+umask 077
+K=$(mktemp -p /dev/shm luks-unlock.XXXXXX)
+trap 'shred -u "$K" 2>/dev/null || rm -f "$K"' EXIT
+
+if [ $UNDO = 1 ]; then
+  if [ -n "$SLOT" ]; then
+    echo "Killing key slot $SLOT on $DEV. Type a disk password that stays (the one you type at boot):"
+    cryptsetup luksKillSlot "$DEV" "$SLOT"
+  else
+    as_user ssh "$SCHED" "cat ~/$REMOTE" > "$K" || { echo "luks-unlock-setup: no key at $SCHED:~/$REMOTE; use --slot N" >&2; exit 1; }
+    cryptsetup luksRemoveKey "$DEV" --key-file "$K"
+  fi
+  as_user ssh "$SCHED" "rm -f ~/$REMOTE" || echo "warning: could not delete $SCHED:~/$REMOTE; delete it by hand" >&2
+  echo "Done: the scheduler's key slot is gone. Check: sudo cryptsetup luksDump $DEV (one slot fewer)."
+  exit 0
+fi
+
+B=/root/luks-header-$MAP-$(date +%F).img
+if [ -e "$B" ]; then echo "= header backup $B exists"
+else cryptsetup luksHeaderBackup "$DEV" --header-backup-file "$B"; chmod 600 "$B"; echo "+ header backup $B"; fi
+new_key > "$K"
+key_ok "$(cat "$K")" || { echo "luks-unlock-setup: key generation failed" >&2; exit 1; }
+echo "Type $NAME's current disk password (the one you type at boot):"
+cryptsetup luksAddKey "$DEV" "$K"
+# the same path the unlock uses: the key on stdin, ended by a newline
+SLOT=$({ cat "$K"; echo; } | cryptsetup -v open --test-passphrase "$DEV" 2>&1 | slot_of) || true
+[ -n "$SLOT" ] || { echo "luks-unlock-setup: the new key does not open $DEV; nothing was copied. Remove it: sudo cryptsetup luksKillSlot $DEV <slot>" >&2; exit 1; }
+echo "+ key slot $SLOT added and tested"
+# a fresh 0600 file moved into place: an older copy with looser permissions is replaced, not reused
+as_user ssh "$SCHED" "umask 077; mkdir -p ~/.config/fleet-wake && t=\$(mktemp ~/.config/fleet-wake/.luks.XXXXXX) && cat > \"\$t\" && mv -f \"\$t\" ~/$REMOTE" < "$K"
+[ "$(as_user ssh "$SCHED" "sha256sum < ~/$REMOTE" | cut -d' ' -f1)" = "$(sha256sum < "$K" | cut -d' ' -f1)" ] ||
+  { echo "luks-unlock-setup: the copy on $SCHED does not match; run again, or undo with --undo --slot $SLOT" >&2; exit 1; }
+echo "+ key copied to $SCHED:~/$REMOTE"
+
+if [ -n "$UNLOCK_HOST" ]; then
+  pins=""
+  for f in /etc/dropbear/dropbear_*_host_key /etc/dropbear/initramfs/dropbear_*_host_key; do
+    [ -s "$f" ] || continue
+    line=$(dropbearkey -y -f "$f" 2>/dev/null | grep -E '^(ssh-|ecdsa-)') || continue
+    pins+="$UNLOCK_HOST ${line% *}"$'\n'
+  done
+  if [ -n "$pins" ]; then
+    # replace this address's old lines, keep every other host's
+    printf %s "$pins" | as_user ssh "$SCHED" "umask 077; f=~/.config/fleet-wake/unlock_known_hosts; touch \$f; \
+      awk -v h='$UNLOCK_HOST' '\$1 != h' \$f > \$f.new; cat >> \$f.new; mv \$f.new \$f"
+    echo "+ boot-image host keys pinned for $UNLOCK_HOST on $SCHED"
+  else
+    echo "! no dropbear host key found: set up the boot image's ssh first (README), then run this again to pin it"
+  fi
+else
+  echo "! no --unlock-host and no $UNLOCK_KEY in hosts.env: host keys not pinned (see README)"
+fi
+echo "Done: $SCHED can now unlock $NAME's disk (slot $SLOT). Undo: luks-unlock-setup --undo --name $NAME"

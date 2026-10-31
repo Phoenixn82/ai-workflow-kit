@@ -1,0 +1,86 @@
+#!/usr/bin/env python3
+"""disk-probe: runs on thor every 6 h. Checks /, /srv/data, /srv/media and /srv/work; ONE silent Telegram when a mount reaches 90 % used
+(df's Use%), goes missing, or recovers. heimdall cannot run df on thor (its only thor keys are forced commands), so
+this runs on thor and sends with thor's own bot token, silently like heimdall-watch.
+  disk-probe              check; alert on change
+  disk-probe --dry-run    check; print the alert instead of sending; leave state alone
+  disk-probe --self-test
+Needs ~/telegram-bot.token and ~/.config/disk-probe/chat-id (written by install.sh from heimdall's chat-id file)."""
+import json
+import math
+import os
+import shutil
+import sys
+import urllib.parse
+import urllib.request
+from pathlib import Path
+
+MOUNTS = ("/", "/srv/data", "/srv/media", "/srv/work")  # /srv/media + /srv/work added 2026-10-18 (media home + backups)
+LIMIT = 90
+STATE = Path.home() / ".local/state/disk-probe/state.json"
+TOKEN = Path.home() / "telegram-bot.token"
+CHAT = Path.home() / ".config/disk-probe/chat-id"
+HALT = [Path.home() / "AI_Projects/_system/automations/HALT", STATE.parent / "HALT"]
+
+
+def level(mounted, used, free):
+    """-> (state, Use%). Use% the way df computes it: used / (used + free-to-users), rounded up."""
+    if not mounted:
+        return "missing", None
+    pct = math.ceil(100 * used / (used + free)) if used + free else 0
+    return ("full" if pct >= LIMIT else "ok"), pct
+
+
+def text(mount, state, pct, free_gb):
+    if state == "full":
+        return f"thor disk: {mount} is {pct} % full ({free_gb} GB free). A full root breaks Ollama, Docker and journald."
+    if state == "missing":
+        return f"thor disk: {mount} is not mounted (the path now writes to the root disk)."
+    return f"thor disk: {mount} back under {LIMIT} % ({pct} %)."
+
+
+def send(msg):
+    data = urllib.parse.urlencode({"chat_id": CHAT.read_text().strip(), "text": msg, "disable_notification": "true"}).encode()
+    urllib.request.urlopen(f"https://api.telegram.org/bot{TOKEN.read_text().strip()}/sendMessage", data, timeout=15)
+
+
+def main(args):
+    if args == ["--self-test"]:
+        assert level(True, 807, 32) == ("full", 97) and level(True, 754, 144) == ("ok", 84)
+        assert level(True, 90, 10) == ("full", 90) and level(True, 89, 11) == ("ok", 89) and level(False, 1, 1)[0] == "missing"
+        assert "back under" in text("/", "ok", 85, 100) and "97 %" in text("/", "full", 97, 32)
+        print("self-test passed")
+        return 0
+    if args not in ([], ["--dry-run"]):
+        print(__doc__, file=sys.stderr)
+        return 2
+    dry = args == ["--dry-run"]
+    if any(h.exists() for h in HALT):
+        print("disk-probe: HALT present")
+        return 0
+    old = json.loads(STATE.read_text()) if STATE.exists() else {}
+    new = dict(old)
+    for m in MOUNTS:
+        u = shutil.disk_usage(m) if os.path.ismount(m) else None  # unmounted dir may not even exist
+        state, pct = level(u is not None, u.used if u else 0, u.free if u else 0)
+        print(f"disk-probe: {m} {state} {pct if pct is not None else '-'} % (was {old.get(m, 'unknown')})")
+        if state == old.get(m, "ok"):  # first sighting of an 'ok' mount is a baseline, not news
+            new[m] = state
+            continue
+        msg = text(m, state, pct, u.free // 10**9 if u else 0)
+        if dry:
+            print("would alert:", msg)
+            continue
+        try:
+            send(msg)
+            new[m] = state  # only after Telegram took it, so a failed send retries next run
+        except OSError as e:
+            print(f"disk-probe: Telegram send failed ({type(e).__name__}); will retry next run", file=sys.stderr)
+    if not dry:
+        STATE.parent.mkdir(parents=True, exist_ok=True)
+        STATE.write_text(json.dumps(new) + "\n")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

@@ -1,0 +1,24 @@
+# webcred guardrails (spec §3.5, _tools/web Task 9). Codex prefix rules match leading argv tokens only, so they
+# cover the fixed shapes below; ~/.claude/hooks/webcred-guard.sh (registered as a Codex PreToolUse hook in
+# ~/.codex/hooks.json) covers paths under /var/lib/webcred and /run/webcred and `sudo ... webcred` anywhere.
+# The only front door to credentials is `web cred` / `web login`.
+
+prefix_rule(pattern=[["sudo", "doas"], ["-u", "--user"], "webcred"], decision="forbidden",
+            justification="Never act as webcred; use web cred / web login.")
+prefix_rule(pattern=["sudo", "-iu", "webcred"], decision="forbidden",
+            justification="Never act as webcred; use web cred / web login.")
+prefix_rule(pattern=["runuser", "-u", "webcred"], decision="forbidden",
+            justification="Never act as webcred; use web cred / web login.")
+prefix_rule(pattern=["su", "webcred"], decision="forbidden",
+            justification="Never act as webcred; use web cred / web login.")
+prefix_rule(pattern=["su", ["-", "-l", "--login"], "webcred"], decision="forbidden",
+            justification="Never act as webcred; use web cred / web login.")
+prefix_rule(pattern=[["age", "rage", "/usr/bin/age"], ["-d", "--decrypt", "-decrypt"]], decision="forbidden",
+            justification="Never decrypt credentials; web login types them without returning them.")
+prefix_rule(pattern=["sudo", ["age", "rage", "/usr/bin/age"], ["-d", "--decrypt", "-decrypt"]], decision="forbidden",
+            justification="Never decrypt credentials; web login types them without returning them.")
+prefix_rule(pattern=[["cat", "less", "head", "tail", "ls", "cp", "strings", "xxd"], "/var/lib/webcred/identity"],
+            decision="forbidden", justification="The age identity is webcred's alone.")
+prefix_rule(pattern=["sudo", ["cat", "less", "head", "tail", "ls", "cp", "strings", "xxd"],
+                     "/var/lib/webcred/identity"],
+            decision="forbidden", justification="The age identity is webcred's alone.")

@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# claude-slice: run `claude "$@"` in a transient scope inside agents.slice (CPUQuota=1200%, MemoryHigh=24G),
+# so every subagent, Workflow agent and Bash child of the session inherits the ceiling.
+# --scope makes systemd-run exec claude in place: same TTY, cwd, env, and claude's own exit code.
+#   claude-slice [claude args]   claude-slice --dry-run [args]   claude-slice --self-test
+set -u
+cmd=(systemd-run --user --scope --slice=agents.slice --unit="claude-$$" --collect --quiet -- claude)
+
+case "${1:-}" in
+  --dry-run) shift; printf '%q ' "${cmd[@]}" "$@"; echo; exit 0 ;;
+  --self-test)
+    s=$(readlink -f "$0")  # absolute: the run below starts from another dir
+    t=$(mktemp -d); trap 'rm -rf "$t"' EXIT
+    # fake claude on PATH reports what it saw, then exits 7
+    printf '#!/bin/sh\n{ pwd; tty; cat /proc/self/cgroup; } > "%s/out"\nexit 7\n' "$t" > "$t/claude"
+    chmod +x "$t/claude"; mkdir "$t/cwd"
+    (cd "$t/cwd" && PATH="$t:$PATH" script -qec "$(printf %q "$s") --x" /dev/null >/dev/null); rc=$?
+    fail=0; ok() { if eval "$2"; then echo "PASS $1"; else echo "FAIL $1"; fail=1; fi; }
+    ok "exit code 7 preserved (got $rc)" '[ "$rc" = 7 ]'
+    ok "cwd preserved" '[ "$(sed -n 1p "$t/out")" = "$t/cwd" ]'
+    ok "tty preserved ($(sed -n 2p "$t/out"))" 'sed -n 2p "$t/out" | grep -q "^/dev/pts/"'
+    ok "cgroup in agents.slice" 'grep -q "/agents.slice/claude-[0-9]*.scope$" "$t/out"'
+    exit $fail ;;
+esac
+
+# ponytail: no user bus (bare ssh/TTY without a user manager) -> run bare claude rather than lock the user out
+if [ ! -S "${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/bus" ]; then
+  echo "claude-slice: no user systemd bus, running claude without agents.slice" >&2
+  exec claude "$@"
+fi
+exec "${cmd[@]}" "$@"

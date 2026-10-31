@@ -1,0 +1,3560 @@
+{
+  "version": 1,
+  "tools": [
+    {
+      "id": "git",
+      "name": "Git",
+      "what": "version control; every profile clones the kit with it",
+      "profiles": [
+        "odin",
+        "loki",
+        "heimdall",
+        "thor",
+        "raven"
+      ],
+      "homepage": "https://git-scm.com",
+      "license": "GPL-2.0-only",
+      "bundled": false,
+      "optional": false,
+      "verify": "git --version",
+      "methods": {
+        "arch": "sudo pacman -S --needed --noconfirm git",
+        "debian": "sudo apt-get install -y git",
+        "macos": "brew install git",
+        "manual": "see https://git-scm.com"
+      }
+    },
+    {
+      "id": "python3",
+      "name": "Python 3",
+      "what": "runs every bundled tool (stdlib only unless a tool says otherwise)",
+      "profiles": [
+        "odin",
+        "loki",
+        "heimdall",
+        "thor",
+        "raven",
+        "telegram"
+      ],
+      "homepage": "https://www.python.org",
+      "license": "PSF-2.0",
+      "bundled": false,
+      "optional": false,
+      "verify": "python3 -c 'import sys; sys.exit(sys.version_info < (3, 10))'",
+      "methods": {
+        "arch": "sudo pacman -S --needed --noconfirm python",
+        "debian": "sudo apt-get install -y python3 python3-venv",
+        "macos": "brew install python",
+        "manual": "see https://www.python.org"
+      }
+    },
+    {
+      "id": "uv",
+      "name": "uv",
+      "what": "Python package and venv manager; bundled Python tools install through it",
+      "profiles": [
+        "odin",
+        "thor",
+        "telegram"
+      ],
+      "homepage": "https://docs.astral.sh/uv/",
+      "license": "MIT OR Apache-2.0",
+      "bundled": false,
+      "optional": false,
+      "verify": "uv --version",
+      "methods": {
+        "arch": "sudo pacman -S --needed --noconfirm uv",
+        "macos": "brew install uv",
+        "debian": "curl -LsSf https://github.com/astral-sh/uv/releases/download/0.12.5/uv-installer.sh | sh",
+        "manual": "see https://docs.astral.sh/uv/"
+      },
+      "script_sha256": {
+        "https://github.com/astral-sh/uv/releases/download/0.12.5/uv-installer.sh": "504511fbbbd811aeaba6738abc79408956b6c7da0ca35437b3dcc24a41efc111"
+      }
+    },
+    {
+      "id": "node",
+      "name": "Node.js + npm",
+      "what": "runtime for agent-browser, the MCP servers, motion, FreeLLMAPI and the npm install methods",
+      "profiles": [
+        "odin",
+        "thor",
+        "raven"
+      ],
+      "homepage": "https://nodejs.org",
+      "license": "MIT",
+      "bundled": false,
+      "optional": false,
+      "verify": "node --version && npm --version",
+      "methods": {
+        "arch": "sudo pacman -S --needed --noconfirm nodejs npm",
+        "debian": "sudo apt-get install -y nodejs npm",
+        "macos": "brew install node",
+        "mise": "mise use -g node@24.20.0",
+        "manual": "see https://nodejs.org"
+      }
+    },
+    {
+      "id": "mise",
+      "name": "mise",
+      "what": "pins the agent CLIs and node per user, no root needed",
+      "profiles": [
+        "odin"
+      ],
+      "homepage": "https://mise.jdx.dev",
+      "license": "MIT",
+      "bundled": false,
+      "optional": true,
+      "verify": "mise --version",
+      "methods": {
+        "arch": "sudo pacman -S --needed --noconfirm mise",
+        "macos": "brew install mise",
+        "debian": "curl -fsSL https://github.com/jdx/mise/releases/download/v2026.8.14/install.sh | sh",
+        "manual": "see https://mise.jdx.dev"
+      },
+      "script_sha256": {
+        "https://github.com/jdx/mise/releases/download/v2026.8.14/install.sh": "4a155ed473a2763d57160e06e667ca3433cfa7b6c1ca0362e47f18e54d2f7b3b"
+      }
+    },
+    {
+      "id": "jq",
+      "name": "jq",
+      "what": "JSON on the command line; used by hooks and setup scripts",
+      "profiles": [
+        "odin",
+        "heimdall",
+        "thor"
+      ],
+      "homepage": "https://jqlang.org",
+      "license": "MIT",
+      "bundled": false,
+      "optional": false,
+      "verify": "jq --version",
+      "methods": {
+        "arch": "sudo pacman -S --needed --noconfirm jq",
+        "debian": "sudo apt-get install -y jq",
+        "macos": "brew install jq",
+        "manual": "see https://jqlang.org"
+      }
+    },
+    {
+      "id": "bubblewrap",
+      "name": "bubblewrap",
+      "what": "no-network sandbox for a flagged session's Bash: the web-taint guard runs it as /usr/bin/bwrap (Linux only; without it a flagged session's Bash fails closed)",
+      "profiles": [
+        "odin"
+      ],
+      "homepage": "https://github.com/containers/bubblewrap",
+      "license": "LGPL-2.0-or-later",
+      "bundled": false,
+      "optional": false,
+      "verify": "test -x /usr/bin/bwrap",
+      "os": [
+        "arch",
+        "debian"
+      ],
+      "methods": {
+        "arch": "sudo pacman -S --needed --noconfirm bubblewrap",
+        "debian": "sudo apt-get install -y bubblewrap",
+        "manual": "see https://github.com/containers/bubblewrap"
+      }
+    },
+    {
+      "id": "ripgrep",
+      "name": "ripgrep",
+      "what": "fast code and vault search (rg)",
+      "profiles": [
+        "odin"
+      ],
+      "homepage": "https://github.com/BurntSushi/ripgrep",
+      "license": "Unlicense OR MIT",
+      "bundled": false,
+      "optional": false,
+      "verify": "rg --version",
+      "methods": {
+        "arch": "sudo pacman -S --needed --noconfirm ripgrep",
+        "debian": "sudo apt-get install -y ripgrep",
+        "macos": "brew install ripgrep",
+        "manual": "see https://github.com/BurntSushi/ripgrep"
+      }
+    },
+    {
+      "id": "openssh",
+      "name": "OpenSSH client",
+      "what": "how every box reaches the others over the tailnet",
+      "profiles": [
+        "odin",
+        "raven"
+      ],
+      "homepage": "https://www.openssh.com",
+      "license": "BSD-2-Clause",
+      "bundled": false,
+      "optional": false,
+      "verify": "command -v ssh",
+      "methods": {
+        "arch": "sudo pacman -S --needed --noconfirm openssh",
+        "debian": "sudo apt-get install -y openssh-client",
+        "manual": "built into macOS; otherwise see https://www.openssh.com"
+      }
+    },
+    {
+      "id": "tailscale",
+      "name": "Tailscale",
+      "what": "private network that ties the boxes together (one name per machine)",
+      "profiles": [
+        "odin",
+        "loki",
+        "heimdall",
+        "thor",
+        "raven"
+      ],
+      "homepage": "https://tailscale.com",
+      "license": "BSD-3-Clause",
+      "bundled": false,
+      "optional": false,
+      "verify": "tailscale version",
+      "methods": {
+        "arch": "sudo pacman -S --needed --noconfirm tailscale && sudo systemctl enable --now tailscaled",
+        "debian": "curl -fsSL https://raw.githubusercontent.com/tailscale/tailscale/v1.102.3/scripts/installer.sh | TAILSCALE_VERSION=1.102.3 sh",
+        "macos": "brew install --cask tailscale-app",
+        "manual": "see https://tailscale.com/download (phones and tablets: the app store)"
+      },
+      "script_sha256": {
+        "https://raw.githubusercontent.com/tailscale/tailscale/v1.102.3/scripts/installer.sh": "805e85ed6f6f81a7ea2e70d52d47e7d5290863299e5c922b2787d71aa312f22e"
+      }
+    },
+    {
+      "id": "tmux",
+      "name": "tmux",
+      "what": "keeps remote sessions alive when the viewer disconnects",
+      "profiles": [
+        "raven"
+      ],
+      "homepage": "https://github.com/tmux/tmux",
+      "license": "ISC",
+      "bundled": false,
+      "optional": false,
+      "verify": "tmux -V",
+      "methods": {
+        "arch": "sudo pacman -S --needed --noconfirm tmux",
+        "debian": "sudo apt-get install -y tmux",
+        "macos": "brew install tmux",
+        "manual": "see https://github.com/tmux/tmux"
+      }
+    },
+    {
+      "id": "mosh",
+      "name": "mosh",
+      "what": "roaming SSH for flaky links (optional)",
+      "profiles": [
+        "raven"
+      ],
+      "homepage": "https://mosh.org",
+      "license": "GPL-3.0-or-later",
+      "bundled": false,
+      "optional": true,
+      "verify": "command -v mosh",
+      "methods": {
+        "arch": "sudo pacman -S --needed --noconfirm mosh",
+        "debian": "sudo apt-get install -y mosh",
+        "macos": "brew install mosh",
+        "manual": "see https://mosh.org"
+      }
+    },
+    {
+      "id": "claude",
+      "name": "Claude Code",
+      "what": "the main coding agent",
+      "profiles": [
+        "odin",
+        "raven"
+      ],
+      "homepage": "https://code.claude.com/docs",
+      "license": "Proprietary (Anthropic Commercial Terms)",
+      "bundled": false,
+      "optional": false,
+      "verify": "claude --version",
+      "methods": {
+        "macos": "brew install --cask claude-code",
+        "npm": "npm install -g @anthropic-ai/claude-code@2.1.296",
+        "manual": "see https://code.claude.com/docs"
+      },
+      "requires": [
+        "node"
+      ]
+    },
+    {
+      "id": "codex",
+      "name": "Codex CLI",
+      "what": "the second coding agent; cx dispatches it with an explicit model and sandbox",
+      "profiles": [
+        "odin"
+      ],
+      "homepage": "https://github.com/openai/codex",
+      "license": "Apache-2.0",
+      "bundled": false,
+      "optional": false,
+      "verify": "codex --version",
+      "methods": {
+        "arch": "sudo pacman -S --needed --noconfirm openai-codex",
+        "macos": "brew install --cask codex",
+        "npm": "npm install -g @openai/codex@0.162.1",
+        "manual": "see https://github.com/openai/codex"
+      },
+      "requires": [
+        "node"
+      ]
+    },
+    {
+      "id": "gemini",
+      "name": "Gemini CLI",
+      "what": "long-context and multimodal reads (optional lane)",
+      "profiles": [
+        "odin"
+      ],
+      "homepage": "https://github.com/google-gemini/gemini-cli",
+      "license": "Apache-2.0",
+      "bundled": false,
+      "optional": true,
+      "verify": "gemini --version",
+      "methods": {
+        "macos": "brew install gemini-cli",
+        "npm": "npm install -g @google/gemini-cli@0.63.0",
+        "manual": "see https://github.com/google-gemini/gemini-cli"
+      },
+      "requires": [
+        "node"
+      ]
+    },
+    {
+      "id": "herdr",
+      "name": "herdr",
+      "what": "terminal multiplexer that shows each agent's state per pane",
+      "profiles": [
+        "odin",
+        "raven"
+      ],
+      "homepage": "https://github.com/herdrdev/herdr",
+      "license": "Apache-2.0",
+      "bundled": false,
+      "optional": true,
+      "verify": "herdr --version",
+      "methods": {
+        "macos": "brew install herdr",
+        "manual": "Linux: download herdr-linux-x86_64 (or herdr-linux-aarch64) from https://github.com/herdrdev/herdr/releases/tag/v0.8.2, check it with sha256sum against 976150a14d490c94b243ea2e1a7eb2dfb67f12e36b182db90936f6728e6aecf4 (x86_64) or f55610658e1c2e0d2aaef730b4b2ab885f7f8ba00285ab372bfb14f2e3d5b40d (aarch64), then install -m 755 <file> ~/.local/bin/herdr; elsewhere see https://github.com/herdrdev/herdr"
+      }
+    },
+    {
+      "id": "gh",
+      "name": "GitHub CLI",
+      "what": "GitHub from the terminal; the guard gate wraps it",
+      "profiles": [
+        "odin"
+      ],
+      "homepage": "https://cli.github.com",
+      "license": "MIT",
+      "bundled": false,
+      "optional": false,
+      "verify": "gh --version",
+      "methods": {
+        "arch": "sudo pacman -S --needed --noconfirm github-cli",
+        "debian": "sudo apt-get install -y gh",
+        "macos": "brew install gh",
+        "manual": "see https://cli.github.com"
+      }
+    },
+    {
+      "id": "gitleaks",
+      "name": "gitleaks",
+      "what": "secret scanner (the kit's pre-commit hook and the push gate's fallback)",
+      "profiles": [
+        "odin"
+      ],
+      "homepage": "https://github.com/gitleaks/gitleaks",
+      "license": "MIT",
+      "bundled": false,
+      "optional": false,
+      "verify": "gitleaks version",
+      "methods": {
+        "arch": "sudo pacman -S --needed --noconfirm gitleaks",
+        "debian": "sudo apt-get install -y gitleaks",
+        "macos": "brew install gitleaks",
+        "manual": "see https://github.com/gitleaks/gitleaks"
+      }
+    },
+    {
+      "id": "betterleaks",
+      "name": "Betterleaks",
+      "what": "the push gate's preferred secret scanner (gitleaks is the fallback)",
+      "profiles": [
+        "odin"
+      ],
+      "homepage": "https://github.com/betterleaks/betterleaks",
+      "license": "MIT",
+      "bundled": false,
+      "optional": true,
+      "verify": "betterleaks version 2>/dev/null | grep -Eq '^v?1\\.9\\.'",
+      "methods": {
+        "manual": "download betterleaks_1.9.0_<linux|darwin>_<x64|arm64>.tar.gz from https://github.com/betterleaks/betterleaks/releases/tag/v1.9.0, check it with sha256sum (macOS: shasum -a 256) against f8b185a39ffcece2a1ca82bf3a4e7435cd81963ffd16b7a9128daf75f35f6de7 (linux_x64), 1d39116e0a58dc94574715e2aa12a2dbd5062f193eee3fec011fef6ba06bd13b (linux_arm64), 83dd7eaab13d44a1e8e347a17064cdef153a1478db473276d41b38d55613d3f2 (darwin_arm64) or 68dfd83458d9e7f90663daa7a81c7f944083b170dae82e4f5f8d0581ed519ef1 (darwin_x64), then put the betterleaks binary from it in ~/.local/bin; the gate is tested with 1.9.0"
+      }
+    },
+    {
+      "id": "chromium",
+      "name": "Chromium",
+      "what": "the browser web act, zendriver and chrome-devtools drive",
+      "profiles": [
+        "odin"
+      ],
+      "homepage": "https://www.chromium.org",
+      "license": "BSD-3-Clause",
+      "bundled": false,
+      "optional": false,
+      "verify": "command -v chromium || command -v chromium-browser",
+      "methods": {
+        "arch": "sudo pacman -S --needed --noconfirm chromium",
+        "debian": "sudo apt-get install -y chromium",
+        "macos": "brew install --cask chromium",
+        "manual": "see https://www.chromium.org"
+      }
+    },
+    {
+      "id": "agent-browser",
+      "name": "agent-browser",
+      "what": "browser automation CLI under web act (attaches over CDP)",
+      "profiles": [
+        "odin"
+      ],
+      "homepage": "https://github.com/vercel-labs/agent-browser",
+      "license": "Apache-2.0",
+      "bundled": false,
+      "optional": false,
+      "verify": "agent-browser --version",
+      "methods": {
+        "macos": "brew install agent-browser",
+        "npm": "npm install -g agent-browser@0.38.1",
+        "manual": "see https://github.com/vercel-labs/agent-browser"
+      },
+      "requires": [
+        "node"
+      ]
+    },
+    {
+      "id": "scrapling",
+      "name": "Scrapling",
+      "what": "the fetch and stealth rungs of web read",
+      "profiles": [
+        "odin"
+      ],
+      "homepage": "https://github.com/D4Vinci/Scrapling",
+      "license": "BSD-3-Clause",
+      "bundled": false,
+      "optional": false,
+      "verify": "scrapling --help >/dev/null",
+      "methods": {
+        "uv": "uv tool install 'scrapling[all]==0.4.15' && scrapling install",
+        "manual": "see https://github.com/D4Vinci/Scrapling"
+      },
+      "requires": [
+        "uv"
+      ]
+    },
+    {
+      "id": "yt-dlp",
+      "name": "yt-dlp",
+      "what": "video and caption downloads for lane-intel and motion references",
+      "profiles": [
+        "odin"
+      ],
+      "homepage": "https://github.com/yt-dlp/yt-dlp",
+      "license": "Unlicense",
+      "bundled": false,
+      "optional": true,
+      "verify": "yt-dlp --version",
+      "methods": {
+        "arch": "sudo pacman -S --needed --noconfirm yt-dlp",
+        "macos": "brew install yt-dlp",
+        "uv": "uv tool install 'yt-dlp==2026.8.19'",
+        "manual": "see https://github.com/yt-dlp/yt-dlp"
+      },
+      "requires": [
+        "uv"
+      ]
+    },
+    {
+      "id": "ffmpeg",
+      "name": "FFmpeg",
+      "what": "audio and video encoding for motion and lane-intel",
+      "profiles": [
+        "odin"
+      ],
+      "homepage": "https://ffmpeg.org",
+      "license": "LGPL-2.1-or-later",
+      "bundled": false,
+      "optional": true,
+      "verify": "ffmpeg -version",
+      "methods": {
+        "arch": "sudo pacman -S --needed --noconfirm ffmpeg",
+        "debian": "sudo apt-get install -y ffmpeg",
+        "macos": "brew install ffmpeg",
+        "manual": "see https://ffmpeg.org"
+      }
+    },
+    {
+      "id": "computer-use-linux",
+      "name": "computer-use-linux MCP",
+      "what": "drives native desktop apps through the accessibility tree",
+      "profiles": [
+        "odin"
+      ],
+      "homepage": "https://github.com/agent-sh/computer-use-linux",
+      "license": "MIT",
+      "bundled": false,
+      "optional": true,
+      "verify": "command -v computer-use-linux",
+      "os": [
+        "arch",
+        "debian"
+      ],
+      "methods": {
+        "npm": "npm install -g @agent-sh/computer-use-linux@0.7.1",
+        "manual": "see https://github.com/agent-sh/computer-use-linux"
+      },
+      "requires": [
+        "node",
+        "claude"
+      ],
+      "install": [
+        {
+          "do": "run",
+          "harness": true,
+          "why": "register the MCP server for Claude Code (writes ~/.claude.json)",
+          "cmd": "claude mcp get computer-use-linux >/dev/null 2>&1 || claude mcp add --scope user computer-use-linux -- computer-use-linux mcp"
+        }
+      ]
+    },
+    {
+      "id": "firefox-devtools-mcp",
+      "name": "Firefox DevTools MCP",
+      "what": "backup browser automation on a separate agent Firefox profile",
+      "profiles": [
+        "odin"
+      ],
+      "homepage": "https://github.com/mozilla/firefox-devtools-mcp",
+      "license": "MIT OR Apache-2.0",
+      "bundled": false,
+      "optional": true,
+      "verify": "claude mcp get firefox-devtools >/dev/null 2>&1 || test -f framework/_tools/desk-control/firefox-mcp/node_modules/@mozilla/firefox-devtools-mcp/dist/index.js",
+      "methods": {
+        "npm": "npm ci --prefix framework/_tools/desk-control/firefox-mcp",
+        "manual": "see https://github.com/mozilla/firefox-devtools-mcp"
+      },
+      "requires": [
+        "node",
+        "claude"
+      ],
+      "install": [
+        {
+          "do": "run",
+          "harness": true,
+          "why": "register the MCP server for Claude Code (writes ~/.claude.json)",
+          "cmd": "claude mcp get firefox-devtools >/dev/null 2>&1 || claude mcp add --scope user firefox-devtools -- node \"$PWD/framework/_tools/desk-control/firefox-mcp/node_modules/@mozilla/firefox-devtools-mcp/dist/index.js\" --connectExisting --marionettePort 2828"
+        }
+      ]
+    },
+    {
+      "id": "chrome-devtools-mcp",
+      "name": "chrome-devtools-mcp plugin",
+      "what": "debug and profile your own web apps (not a scraping lane)",
+      "profiles": [
+        "odin"
+      ],
+      "homepage": "https://github.com/ChromeDevTools/chrome-devtools-mcp",
+      "license": "Apache-2.0",
+      "bundled": false,
+      "optional": false,
+      "verify": "claude plugin list 2>/dev/null | grep -q 'chrome-devtools-mcp@claude-plugins-official'",
+      "methods": {
+        "claude-plugin": "(claude plugin marketplace list 2>/dev/null | grep -q 'anthropics/claude-plugins-official' || claude plugin marketplace add anthropics/claude-plugins-official) && claude plugin install chrome-devtools-mcp@claude-plugins-official",
+        "manual": "see https://github.com/ChromeDevTools/chrome-devtools-mcp"
+      },
+      "requires": [
+        "claude",
+        "node",
+        "chromium"
+      ]
+    },
+    {
+      "id": "superpowers",
+      "name": "superpowers plugin",
+      "what": "brainstorm, plan, TDD, subagent-driven build, verify before done",
+      "profiles": [
+        "odin"
+      ],
+      "homepage": "https://github.com/obra/superpowers",
+      "license": "MIT",
+      "bundled": false,
+      "optional": false,
+      "verify": "claude plugin list 2>/dev/null | grep -q 'superpowers@superpowers-marketplace'",
+      "methods": {
+        "claude-plugin": "(claude plugin marketplace list 2>/dev/null | grep -q 'obra/superpowers-marketplace' || claude plugin marketplace add obra/superpowers-marketplace) && claude plugin install superpowers@superpowers-marketplace",
+        "manual": "see https://github.com/obra/superpowers"
+      },
+      "requires": [
+        "claude"
+      ]
+    },
+    {
+      "id": "ponytail",
+      "name": "ponytail plugin",
+      "what": "forces the laziest working solution; review, audit and debt skills",
+      "profiles": [
+        "odin"
+      ],
+      "homepage": "https://github.com/DietrichGebert/ponytail",
+      "license": "MIT",
+      "bundled": false,
+      "optional": true,
+      "verify": "claude plugin list 2>/dev/null | grep -q 'ponytail@ponytail'",
+      "methods": {
+        "claude-plugin": "(claude plugin marketplace list 2>/dev/null | grep -q 'DietrichGebert/ponytail' || claude plugin marketplace add DietrichGebert/ponytail) && claude plugin install ponytail@ponytail",
+        "manual": "see https://github.com/DietrichGebert/ponytail"
+      },
+      "requires": [
+        "claude"
+      ]
+    },
+    {
+      "id": "frontend-design",
+      "name": "frontend-design plugin",
+      "what": "design guidance for web front ends",
+      "profiles": [
+        "odin"
+      ],
+      "homepage": "https://github.com/anthropics/claude-plugins-official",
+      "license": "Apache-2.0",
+      "bundled": false,
+      "optional": true,
+      "verify": "claude plugin list 2>/dev/null | grep -q 'frontend-design@claude-plugins-official'",
+      "methods": {
+        "claude-plugin": "(claude plugin marketplace list 2>/dev/null | grep -q 'anthropics/claude-plugins-official' || claude plugin marketplace add anthropics/claude-plugins-official) && claude plugin install frontend-design@claude-plugins-official",
+        "manual": "see https://github.com/anthropics/claude-plugins-official"
+      },
+      "requires": [
+        "claude"
+      ]
+    },
+    {
+      "id": "impeccable",
+      "name": "impeccable plugin",
+      "what": "design critique, audit and polish passes",
+      "profiles": [
+        "odin"
+      ],
+      "homepage": "https://github.com/pbakaus/impeccable",
+      "license": "Apache-2.0",
+      "bundled": false,
+      "optional": true,
+      "verify": "claude plugin list 2>/dev/null | grep -q 'impeccable@impeccable'",
+      "methods": {
+        "claude-plugin": "(claude plugin marketplace list 2>/dev/null | grep -q 'pbakaus/impeccable' || claude plugin marketplace add pbakaus/impeccable) && claude plugin install impeccable@impeccable",
+        "manual": "see https://github.com/pbakaus/impeccable"
+      },
+      "requires": [
+        "claude"
+      ]
+    },
+    {
+      "id": "obsidian",
+      "name": "Obsidian",
+      "what": "reads and edits the vault as linked notes (the agents only need the files)",
+      "profiles": [
+        "odin"
+      ],
+      "homepage": "https://obsidian.md",
+      "license": "Proprietary (free to use)",
+      "bundled": false,
+      "optional": true,
+      "verify": "command -v obsidian || test -d /Applications/Obsidian.app || flatpak info md.obsidian.Obsidian >/dev/null 2>&1",
+      "methods": {
+        "arch": "sudo pacman -S --needed --noconfirm obsidian",
+        "debian": "flatpak install -y flathub md.obsidian.Obsidian",
+        "macos": "brew install --cask obsidian",
+        "manual": "see https://obsidian.md"
+      }
+    },
+    {
+      "id": "docker",
+      "name": "Docker Engine + Compose",
+      "what": "runs every server service from a compose file",
+      "profiles": [
+        "loki",
+        "heimdall",
+        "thor"
+      ],
+      "homepage": "https://docs.docker.com/engine/",
+      "license": "Apache-2.0",
+      "bundled": false,
+      "optional": false,
+      "verify": "docker compose version",
+      "methods": {
+        "arch": "sudo pacman -S --needed --noconfirm docker docker-compose && sudo systemctl enable --now docker",
+        "debian": "sudo apt-get install -y docker.io \"$(apt-cache show docker-compose-v2 >/dev/null 2>&1 && echo docker-compose-v2 || echo docker-compose)\"",
+        "macos": "brew install colima docker docker-compose && { docker compose version >/dev/null 2>&1 || { mkdir -p ~/.docker/cli-plugins && ln -s \"$(brew --prefix)/lib/docker/cli-plugins/docker-compose\" ~/.docker/cli-plugins/docker-compose; }; } && brew services start colima",
+        "manual": "see https://docs.docker.com/engine/install/ (macOS: colima, https://github.com/abiosoft/colima)"
+      }
+    },
+    {
+      "id": "restic",
+      "name": "restic",
+      "what": "encrypted, deduplicated backups (odin sends, thor and heimdall hold repositories)",
+      "profiles": [
+        "odin",
+        "heimdall",
+        "thor"
+      ],
+      "homepage": "https://restic.net",
+      "license": "BSD-2-Clause",
+      "bundled": false,
+      "optional": false,
+      "verify": "restic version",
+      "methods": {
+        "arch": "sudo pacman -S --needed --noconfirm restic",
+        "debian": "sudo apt-get install -y restic",
+        "macos": "brew install restic",
+        "manual": "see https://restic.net"
+      }
+    },
+    {
+      "id": "jellyfin",
+      "name": "Jellyfin",
+      "what": "streams your own movies, shows and music to every screen in the house",
+      "profiles": [
+        "loki"
+      ],
+      "homepage": "https://jellyfin.org",
+      "license": "GPL-2.0-only",
+      "bundled": false,
+      "optional": false,
+      "verify": "docker image inspect jellyfin/jellyfin:12.1 >/dev/null 2>&1 || test -d /Applications/Jellyfin.app",
+      "methods": {
+        "docker": "docker pull jellyfin/jellyfin:12.1",
+        "macos": "brew install --cask jellyfin",
+        "manual": "see https://jellyfin.org"
+      },
+      "requires": [
+        "docker"
+      ]
+    },
+    {
+      "id": "samba",
+      "name": "Samba",
+      "what": "shares the media folders with the house's computers (read-only by default)",
+      "profiles": [
+        "loki",
+        "thor"
+      ],
+      "homepage": "https://www.samba.org",
+      "license": "GPL-3.0-or-later",
+      "bundled": false,
+      "optional": true,
+      "verify": "command -v smbd || test -x /usr/sbin/smbd",
+      "methods": {
+        "arch": "sudo pacman -S --needed --noconfirm samba",
+        "debian": "sudo apt-get install -y samba",
+        "manual": "built into macOS: System Settings > General > Sharing > File Sharing; elsewhere see https://www.samba.org"
+      }
+    },
+    {
+      "id": "smartmontools",
+      "name": "smartmontools",
+      "what": "disk health checks for the drives that hold media and backups",
+      "profiles": [
+        "loki",
+        "thor"
+      ],
+      "homepage": "https://www.smartmontools.org",
+      "license": "GPL-2.0-or-later",
+      "bundled": false,
+      "optional": true,
+      "verify": "command -v smartctl || test -x /usr/sbin/smartctl",
+      "methods": {
+        "arch": "sudo pacman -S --needed --noconfirm smartmontools",
+        "debian": "sudo apt-get install -y smartmontools",
+        "macos": "brew install smartmontools",
+        "manual": "see https://www.smartmontools.org"
+      }
+    },
+    {
+      "id": "uptime-kuma",
+      "name": "Uptime Kuma",
+      "what": "checks every box and service and alerts on a change",
+      "profiles": [
+        "heimdall"
+      ],
+      "homepage": "https://github.com/louislam/uptime-kuma",
+      "license": "MIT",
+      "bundled": false,
+      "optional": false,
+      "verify": "docker image inspect louislam/uptime-kuma:2.5.6 >/dev/null 2>&1",
+      "methods": {
+        "docker": "docker pull louislam/uptime-kuma:2.5.6",
+        "manual": "see https://github.com/louislam/uptime-kuma"
+      },
+      "requires": [
+        "docker",
+        "server-lane-heimdall"
+      ]
+    },
+    {
+      "id": "ntfy",
+      "name": "ntfy",
+      "what": "self-hosted push notifications to your phone (Telegram is the other option)",
+      "profiles": [
+        "heimdall"
+      ],
+      "homepage": "https://github.com/binwiederhier/ntfy",
+      "license": "Apache-2.0 OR GPL-2.0-only",
+      "bundled": false,
+      "optional": true,
+      "verify": "docker image inspect binwiederhier/ntfy:v2.30.0 >/dev/null 2>&1",
+      "methods": {
+        "docker": "docker pull binwiederhier/ntfy:v2.30.0",
+        "manual": "see https://github.com/binwiederhier/ntfy"
+      },
+      "requires": [
+        "docker",
+        "server-lane-heimdall"
+      ]
+    },
+    {
+      "id": "pihole",
+      "name": "Pi-hole",
+      "what": "network-wide ad blocking DNS for the house (optional)",
+      "profiles": [
+        "heimdall"
+      ],
+      "homepage": "https://pi-hole.net",
+      "license": "EUPL-1.2",
+      "bundled": false,
+      "optional": true,
+      "verify": "docker image inspect pihole/pihole:2026.09.0 >/dev/null 2>&1",
+      "methods": {
+        "docker": "docker pull pihole/pihole:2026.09.0",
+        "manual": "see https://pi-hole.net"
+      },
+      "requires": [
+        "docker",
+        "server-lane-heimdall"
+      ]
+    },
+    {
+      "id": "unbound",
+      "name": "Unbound",
+      "what": "local recursive DNS resolver behind Pi-hole (optional)",
+      "profiles": [
+        "heimdall"
+      ],
+      "homepage": "https://nlnetlabs.nl/projects/unbound/",
+      "license": "BSD-3-Clause",
+      "bundled": false,
+      "optional": true,
+      "verify": "command -v unbound || test -x /usr/sbin/unbound",
+      "methods": {
+        "arch": "sudo pacman -S --needed --noconfirm unbound",
+        "debian": "sudo apt-get install -y unbound",
+        "macos": "brew install unbound",
+        "manual": "see https://nlnetlabs.nl/projects/unbound/"
+      }
+    },
+    {
+      "id": "ollama",
+      "name": "Ollama",
+      "what": "runs local models on the GPU (thor) or CPU",
+      "profiles": [
+        "thor"
+      ],
+      "homepage": "https://ollama.com",
+      "license": "MIT",
+      "bundled": false,
+      "optional": false,
+      "verify": "ollama --version",
+      "methods": {
+        "arch": "sudo pacman -S --needed --noconfirm ollama-cuda && sudo systemctl enable --now ollama",
+        "debian": "curl -fsSL https://raw.githubusercontent.com/ollama/ollama/v0.33.3/scripts/install.sh | OLLAMA_VERSION=0.33.3 sh",
+        "macos": "brew install ollama",
+        "manual": "see https://ollama.com/download (arch without NVIDIA: the plain ollama package)"
+      },
+      "script_sha256": {
+        "https://raw.githubusercontent.com/ollama/ollama/v0.33.3/scripts/install.sh": "25f64b810b947145095956533e1bdf56eacea2673c55a7e586be4515fc882c9f"
+      }
+    },
+    {
+      "id": "faster-whisper",
+      "name": "faster-whisper",
+      "what": "speech to text on the GPU with a CPU fallback (lane-intel transcripts)",
+      "profiles": [
+        "thor"
+      ],
+      "homepage": "https://github.com/SYSTRAN/faster-whisper",
+      "license": "MIT",
+      "bundled": false,
+      "optional": true,
+      "verify": "~/.local/lane-intel/venv/bin/python -c 'import faster_whisper'",
+      "methods": {
+        "arch": "python3 -m venv ~/.local/lane-intel/venv && ~/.local/lane-intel/venv/bin/pip install -q yt-dlp==2026.8.19 faster-whisper==1.2.1 nvidia-cublas-cu12==12.9.2.10 nvidia-cudnn-cu12==9.27.0.42 av==15.1.0",
+        "debian": "python3 -m venv ~/.local/lane-intel/venv && ~/.local/lane-intel/venv/bin/pip install -q yt-dlp==2026.8.19 faster-whisper==1.2.1 nvidia-cublas-cu12==12.9.2.10 nvidia-cudnn-cu12==9.27.0.42 av==15.1.0",
+        "manual": "see https://github.com/SYSTRAN/faster-whisper (no NVIDIA GPU: install faster-whisper alone; it runs on the CPU)"
+      },
+      "requires": [
+        "python3"
+      ]
+    },
+    {
+      "id": "freellmapi",
+      "name": "FreeLLMAPI",
+      "what": "side router over free-tier model providers, loopback only (never the primary path)",
+      "profiles": [
+        "thor"
+      ],
+      "homepage": "https://github.com/tashfeenahmed/freellmapi",
+      "license": "MIT",
+      "bundled": false,
+      "optional": true,
+      "verify": "systemctl --user is-active --quiet freellmapi.service",
+      "os": [
+        "arch",
+        "debian"
+      ],
+      "methods": {
+        "arch": "bash servers/tools/freellmapi-bootstrap.sh ~/freellmapi",
+        "debian": "bash servers/tools/freellmapi-bootstrap.sh ~/freellmapi",
+        "manual": "see https://github.com/tashfeenahmed/freellmapi"
+      },
+      "requires": [
+        "git",
+        "node"
+      ]
+    },
+    {
+      "id": "telegram-desktop",
+      "name": "Telegram Desktop",
+      "what": "the logged-in session tg-admin imports once (Linux only)",
+      "profiles": [
+        "telegram"
+      ],
+      "homepage": "https://desktop.telegram.org",
+      "license": "GPL-3.0-only",
+      "bundled": false,
+      "optional": true,
+      "verify": "command -v Telegram || command -v telegram-desktop",
+      "os": [
+        "arch",
+        "debian"
+      ],
+      "methods": {
+        "arch": "sudo pacman -S --needed --noconfirm telegram-desktop",
+        "debian": "sudo apt-get install -y telegram-desktop",
+        "manual": "see https://desktop.telegram.org"
+      }
+    },
+    {
+      "id": "workspace",
+      "name": "Workspace layout",
+      "what": "the ~/AI_Projects tree the hooks and units name; links point into this clone",
+      "profiles": [
+        "odin"
+      ],
+      "homepage": "framework",
+      "license": "MIT",
+      "bundled": true,
+      "optional": false,
+      "verify": "test -d ~/AI_Projects/_system/automations",
+      "methods": {
+        "manual": "framework"
+      },
+      "install": [
+        {
+          "do": "mkdir",
+          "path": "~/AI_Projects/_tools"
+        },
+        {
+          "do": "mkdir",
+          "path": "~/AI_Projects/_system/automations"
+        },
+        {
+          "do": "mkdir",
+          "path": "~/AI_Projects/pipeline"
+        },
+        {
+          "do": "link",
+          "src": "framework/_system/automations/preflight.py",
+          "dest": "~/AI_Projects/_system/automations/preflight.py"
+        },
+        {
+          "do": "link",
+          "src": "framework/_system/automations/record_spend.py",
+          "dest": "~/AI_Projects/_system/automations/record_spend.py"
+        },
+        {
+          "do": "link",
+          "src": "framework/_system/lanes.json",
+          "dest": "~/AI_Projects/_system/lanes.json"
+        }
+      ],
+      "entrypoints": {},
+      "config": [
+        {
+          "path": "~/AI_Projects/_system/automations/HALT",
+          "note": "touch it to stop every scheduled job"
+        }
+      ],
+      "requires": [
+        "python3"
+      ]
+    },
+    {
+      "id": "hosts-env",
+      "name": "hosts.env address book",
+      "what": "the one file that tells the tools where your other machines are; starts empty, you fill in only the hosts you have",
+      "profiles": [
+        "odin",
+        "heimdall",
+        "raven"
+      ],
+      "homepage": "examples/hosts.env.example",
+      "license": "MIT",
+      "bundled": true,
+      "optional": false,
+      "verify": "test -f ~/.config/ai-workflow-kit/hosts.env",
+      "methods": {
+        "manual": "examples/hosts.env.example"
+      },
+      "requires": [],
+      "install": [
+        {
+          "do": "mkdir",
+          "path": "~/.config/ai-workflow-kit"
+        },
+        {
+          "do": "copy",
+          "src": "examples/hosts.env.example",
+          "dest": "~/.config/ai-workflow-kit/hosts.env",
+          "mode": "600"
+        },
+        {
+          "do": "note",
+          "text": "fill in only the hosts you have in ~/.config/ai-workflow-kit/hosts.env; a tool that needs an empty key stops with \"set KEY in hosts.env\""
+        }
+      ],
+      "entrypoints": {},
+      "config": [
+        {
+          "path": "~/.config/ai-workflow-kit/hosts.env",
+          "note": "KEY=value lines, mode 600; an environment variable of the same name wins; KIT_HOSTS_ENV points the tools at another file"
+        }
+      ]
+    },
+    {
+      "id": "vault",
+      "name": "Starter vault",
+      "what": "the second-brain folder the distiller writes and vault-recall searches, plus the SessionStart hook that injects its boot block",
+      "profiles": [
+        "odin"
+      ],
+      "homepage": "examples/vault",
+      "license": "MIT",
+      "bundled": true,
+      "optional": false,
+      "verify": "test -d ~/AI_Projects/_system/second-brain",
+      "methods": {
+        "manual": "examples/vault"
+      },
+      "install": [
+        {
+          "do": "copy",
+          "src": "examples/vault",
+          "dest": "~/AI_Projects/_system/second-brain"
+        },
+        {
+          "do": "link",
+          "src": "framework/.claude/hooks/inject-vault-boot.sh",
+          "dest": "~/AI_Projects/.claude/hooks/inject-vault-boot.sh"
+        }
+      ],
+      "entrypoints": {},
+      "config": [],
+      "requires": [
+        "workspace"
+      ]
+    },
+    {
+      "id": "route",
+      "name": "route",
+      "what": "which lane (model + effort) fits a task class; no default lane",
+      "profiles": [
+        "odin"
+      ],
+      "homepage": "framework/harness/bin/route",
+      "license": "MIT",
+      "bundled": true,
+      "optional": false,
+      "verify": "route --self-test 2>&1 | grep -q 'route self-test passed'",
+      "methods": {
+        "manual": "framework/harness/bin/route"
+      },
+      "install": [
+        {
+          "do": "link",
+          "src": "framework/harness/bin/route",
+          "dest": "~/.local/bin/route"
+        }
+      ],
+      "entrypoints": {
+        "route": "framework/harness/bin/route"
+      },
+      "config": [
+        {
+          "path": "framework/_system/lanes.json",
+          "keys": [
+            "ROUTE_LANES",
+            "KIT_HOME"
+          ],
+          "note": "ROUTE_LANES, else $KIT_HOME/framework/_system/lanes.json, else ~/AI_Projects/_system/lanes.json, else (when that is missing) the clone's own framework/_system/lanes.json"
+        }
+      ],
+      "requires": [
+        "python3"
+      ]
+    },
+    {
+      "id": "cx",
+      "name": "cx",
+      "what": "the one way Claude dispatches Codex: explicit model, sandbox, outfile, timeout",
+      "profiles": [
+        "odin"
+      ],
+      "homepage": "framework/harness/bin/cx",
+      "license": "MIT",
+      "bundled": true,
+      "optional": false,
+      "verify": "command -v cx",
+      "methods": {
+        "manual": "framework/harness/bin/cx"
+      },
+      "install": [
+        {
+          "do": "link",
+          "src": "framework/harness/bin/cx",
+          "dest": "~/.local/bin/cx"
+        }
+      ],
+      "entrypoints": {
+        "cx": "framework/harness/bin/cx"
+      },
+      "config": [
+        {
+          "path": "framework/_system/lanes.json",
+          "keys": [
+            "ROUTE_LANES",
+            "KIT_HOME"
+          ]
+        }
+      ],
+      "requires": [
+        "codex",
+        "route"
+      ]
+    },
+    {
+      "id": "thor-up",
+      "name": "thor-up",
+      "what": "wakes the GPU box before a job needs it (Wake-on-LAN, then waits for ssh)",
+      "profiles": [
+        "odin",
+        "raven"
+      ],
+      "homepage": "framework/harness/bin/thor-up",
+      "license": "MIT",
+      "bundled": true,
+      "optional": true,
+      "verify": "thor-up --self-test >/dev/null",
+      "methods": {
+        "manual": "framework/harness/bin/thor-up"
+      },
+      "install": [
+        {
+          "do": "link",
+          "src": "framework/harness/bin/thor-up",
+          "dest": "~/.local/bin/thor-up"
+        }
+      ],
+      "entrypoints": {
+        "thor-up": "framework/harness/bin/thor-up"
+      },
+      "config": [
+        {
+          "path": "~/.config/ai-workflow-kit/hosts.env",
+          "keys": [
+            "THOR_HOST",
+            "THOR_MAC",
+            "LAN_BROADCAST"
+          ],
+          "required": false
+        }
+      ],
+      "requires": [
+        "python3",
+        "hosts-env"
+      ]
+    },
+    {
+      "id": "claude-harness",
+      "name": "Claude Code harness",
+      "what": "hook dispatcher (fails closed), secret firewall, model guard, output style and slash commands",
+      "profiles": [
+        "odin"
+      ],
+      "homepage": "framework/harness",
+      "license": "MIT",
+      "bundled": true,
+      "optional": false,
+      "verify": "test -f ~/.claude/hooks/dispatch/dispatch.sh",
+      "methods": {
+        "manual": "framework/harness"
+      },
+      "install": [
+        {
+          "do": "copy",
+          "harness": true,
+          "src": "framework/harness/hooks/dispatch",
+          "dest": "~/.claude/hooks/dispatch"
+        },
+        {
+          "do": "copy",
+          "harness": true,
+          "src": "framework/harness/hooks/secret-firewall",
+          "dest": "~/.claude/hooks/secret-firewall"
+        },
+        {
+          "do": "copy",
+          "harness": true,
+          "src": "framework/harness/hooks/odin-model-guard.py",
+          "dest": "~/.claude/hooks/odin-model-guard.py"
+        },
+        {
+          "do": "copy",
+          "harness": true,
+          "src": "framework/harness/hooks/webcred-guard.sh",
+          "dest": "~/.claude/hooks/webcred-guard.sh"
+        },
+        {
+          "do": "copy",
+          "harness": true,
+          "src": "framework/harness/hooks/github-publish-nudge.sh",
+          "dest": "~/.claude/hooks/github-publish-nudge.sh"
+        },
+        {
+          "do": "copy",
+          "harness": true,
+          "src": "framework/harness/hooks/herdr-agent-state.sh",
+          "dest": "~/.claude/hooks/herdr-agent-state.sh"
+        },
+        {
+          "do": "copy",
+          "harness": true,
+          "src": "framework/harness/hooks/hook_event.py",
+          "dest": "~/.claude/hooks/hook_event.py"
+        },
+        {
+          "do": "copy",
+          "harness": true,
+          "src": "framework/harness/hooks/hook-event.sh",
+          "dest": "~/.claude/hooks/hook-event.sh"
+        },
+        {
+          "do": "copy",
+          "harness": true,
+          "src": "framework/harness/output-styles/signal.md",
+          "dest": "~/.claude/output-styles/signal.md"
+        },
+        {
+          "do": "copy",
+          "harness": true,
+          "src": "framework/harness/agents/lean.md",
+          "dest": "~/.claude/agents/lean.md"
+        },
+        {
+          "do": "copy",
+          "harness": true,
+          "src": "framework/harness/commands",
+          "dest": "~/.claude/commands"
+        },
+        {
+          "do": "copy",
+          "harness": true,
+          "src": "framework/harness/bin/chrome-devtools-repatch",
+          "dest": "~/.local/bin/chrome-devtools-repatch",
+          "mode": "755"
+        },
+        {
+          "do": "note",
+          "text": "hook wiring comes from the profile rule for ~/.claude/settings.json (merged, never replaced)"
+        }
+      ],
+      "entrypoints": {},
+      "config": [],
+      "requires": [
+        "claude",
+        "python3",
+        "workspace",
+        "handoff-v2"
+      ]
+    },
+    {
+      "id": "codex-harness",
+      "name": "Codex harness",
+      "what": "Codex hooks (vault sync, handoff) and agent-state reporting",
+      "profiles": [
+        "odin"
+      ],
+      "homepage": "framework/harness/codex",
+      "license": "MIT",
+      "bundled": true,
+      "optional": true,
+      "verify": "test -f ~/.codex/herdr-agent-state.sh",
+      "methods": {
+        "manual": "framework/harness/codex"
+      },
+      "install": [
+        {
+          "do": "copy",
+          "harness": true,
+          "src": "framework/harness/codex/herdr-agent-state.sh",
+          "dest": "~/.codex/herdr-agent-state.sh",
+          "mode": "755"
+        },
+        {
+          "do": "copy",
+          "harness": true,
+          "src": "framework/harness/bin/vault-sync",
+          "dest": "~/.local/bin/vault-sync",
+          "mode": "755"
+        },
+        {
+          "do": "note",
+          "text": "~/.codex/hooks.json and AGENTS.md come from the profile rules (merged, never replaced)"
+        }
+      ],
+      "entrypoints": {},
+      "config": [],
+      "requires": [
+        "codex",
+        "workspace"
+      ]
+    },
+    {
+      "id": "guard-gate",
+      "name": "Public-push gate",
+      "what": "global pre-push hook and gh wrapper: public pushes and flips pass a secret scan, a personal-data denylist and a Codex review first",
+      "profiles": [
+        "odin"
+      ],
+      "homepage": "framework/_system/skills/guard",
+      "license": "MIT",
+      "bundled": true,
+      "optional": false,
+      "verify": "test -x ~/.local/bin/guard/gh && [ \"$(git config --global --type=path --get core.hooksPath)\" = \"$HOME/AI_Projects/_system/skills/guard/githooks\" ]",
+      "methods": {
+        "manual": "framework/_system/skills/guard"
+      },
+      "install": [
+        {
+          "do": "link",
+          "src": "framework/_system/skills/guard",
+          "dest": "~/AI_Projects/_system/skills/guard"
+        },
+        {
+          "do": "mkdir",
+          "path": "~/.local/bin/guard"
+        },
+        {
+          "do": "link",
+          "src": "framework/_system/skills/guard/bin/gh",
+          "dest": "~/.local/bin/guard/gh"
+        },
+        {
+          "do": "run",
+          "harness": true,
+          "why": "global git setting: every repo's pre-push runs the gate (private repos skip it); an existing core.hooksPath is kept",
+          "cmd": "want=\"$HOME/AI_Projects/_system/skills/guard/githooks\"; cur=$(git config --global --type=path --get core.hooksPath || true); if [ -z \"$cur\" ]; then git config --global core.hooksPath \"$want\"; elif [ \"$cur\" != \"$want\" ]; then echo \"core.hooksPath is already $cur: kept, so the gate is not wired; see framework/_system/skills/guard/README.md\" >&2; exit 1; fi"
+        },
+        {
+          "do": "note",
+          "text": "put ~/.local/bin/guard first on PATH (framework/_system/skills/guard/README.md step 1)"
+        }
+      ],
+      "entrypoints": {},
+      "config": [
+        {
+          "path": "~/AI_Projects/_system/skills/guard/scripts/denylist.local.json",
+          "note": "your personal-data denylist; start from denylist.example.json"
+        }
+      ],
+      "requires": [
+        "gh",
+        "gitleaks",
+        "codex",
+        "python3",
+        "workspace"
+      ]
+    },
+    {
+      "id": "kit-skills",
+      "name": "Skills",
+      "what": "the kit's skills for Claude Code and Codex (codex-build, codex-review, guard, router, second-brain, web, telegram...)",
+      "profiles": [
+        "odin"
+      ],
+      "homepage": "framework/harness/skills",
+      "license": "MIT",
+      "bundled": true,
+      "optional": false,
+      "verify": "test -e ~/.claude/skills/codex-review",
+      "methods": {
+        "manual": "framework/harness/skills"
+      },
+      "install": [
+        {
+          "do": "link",
+          "harness": true,
+          "src": "framework/harness/skills/codex-build",
+          "dest": "~/.claude/skills/codex-build"
+        },
+        {
+          "do": "link",
+          "harness": true,
+          "src": "framework/harness/skills/codex-goal-dispatcher",
+          "dest": "~/.claude/skills/codex-goal-dispatcher"
+        },
+        {
+          "do": "link",
+          "harness": true,
+          "src": "framework/harness/skills/codex-review",
+          "dest": "~/.claude/skills/codex-review"
+        },
+        {
+          "do": "link",
+          "harness": true,
+          "src": "framework/harness/skills/grill-me-codex",
+          "dest": "~/.claude/skills/grill-me-codex"
+        },
+        {
+          "do": "link",
+          "harness": true,
+          "src": "framework/harness/skills/grill-with-docs-codex",
+          "dest": "~/.claude/skills/grill-with-docs-codex"
+        },
+        {
+          "do": "link",
+          "harness": true,
+          "src": "framework/_system/skills/guard",
+          "dest": "~/.claude/skills/guard"
+        },
+        {
+          "do": "link",
+          "harness": true,
+          "src": "framework/_system/skills/router",
+          "dest": "~/.claude/skills/router"
+        },
+        {
+          "do": "link",
+          "harness": true,
+          "src": "framework/_system/skills/second-brain",
+          "dest": "~/.claude/skills/second-brain"
+        }
+      ],
+      "entrypoints": {},
+      "config": [],
+      "requires": [
+        "claude"
+      ]
+    },
+    {
+      "id": "handoff-v2",
+      "name": "handoff-v2",
+      "what": "distills every session into the vault (Haiku, local model fallback) and injects a brief at the next start",
+      "profiles": [
+        "odin"
+      ],
+      "homepage": "framework/pipeline/handoff-v2",
+      "license": "MIT",
+      "bundled": true,
+      "optional": false,
+      "verify": "test -f ~/AI_Projects/pipeline/handoff-v2/bin/handoff-start.sh",
+      "methods": {
+        "manual": "framework/pipeline/handoff-v2"
+      },
+      "install": [
+        {
+          "do": "link",
+          "src": "framework/pipeline/handoff-v2",
+          "dest": "~/AI_Projects/pipeline/handoff-v2"
+        },
+        {
+          "do": "note",
+          "text": "its SessionStart, SessionEnd, PreCompact and SubagentStart hooks come from the profile rule for ~/.claude/settings.json (merged, never replaced, only with --harness); do not also run handoff.install --apply, which would wire a second copy under this clone's path"
+        }
+      ],
+      "entrypoints": {},
+      "config": [
+        {
+          "path": "~/.config/ai-workflow-kit/hosts.env",
+          "keys": [
+            "THOR_OLLAMA_URL"
+          ],
+          "required": false
+        },
+        {
+          "path": "framework/_system/lanes.json",
+          "note": "lane claude.distill"
+        }
+      ],
+      "requires": [
+        "python3",
+        "claude",
+        "workspace",
+        "vault",
+        "hosts-env"
+      ]
+    },
+    {
+      "id": "vault-rag",
+      "name": "vault-rag",
+      "what": "hybrid search over the vault, injected on every prompt (vault-recall CLI)",
+      "profiles": [
+        "odin"
+      ],
+      "homepage": "framework/_tools/vault-rag",
+      "license": "MIT",
+      "bundled": true,
+      "optional": false,
+      "verify": "command -v vault-recall",
+      "os": [
+        "arch",
+        "debian"
+      ],
+      "methods": {
+        "manual": "framework/_tools/vault-rag"
+      },
+      "install": [
+        {
+          "do": "link",
+          "src": "framework/_tools/vault-rag",
+          "dest": "~/AI_Projects/_tools/vault-rag"
+        },
+        {
+          "do": "run",
+          "why": "make the .venv (uv + sqlite-vec), link vault-recall and the reindex units; never enables the timer",
+          "cmd": "framework/_tools/vault-rag/install.sh"
+        }
+      ],
+      "entrypoints": {
+        "vault-recall": "framework/_tools/vault-rag/vault-recall"
+      },
+      "config": [
+        {
+          "path": "~/.config/ai-workflow-kit/hosts.env",
+          "keys": [
+            "EMBED_URL"
+          ],
+          "required": false
+        },
+        {
+          "path": "~/.local/state/vault-rag/vault_index.db",
+          "note": "the index (never in the vault)"
+        }
+      ],
+      "requires": [
+        "uv",
+        "python3",
+        "workspace",
+        "vault",
+        "hosts-env",
+        "jq"
+      ]
+    },
+    {
+      "id": "vault-lint",
+      "name": "vault-lint",
+      "what": "enforces the vault schema: report, fill, rotate (stdlib, no model)",
+      "profiles": [
+        "odin"
+      ],
+      "homepage": "framework/_tools/vault-lint",
+      "license": "MIT",
+      "bundled": true,
+      "optional": false,
+      "verify": "python3 ~/AI_Projects/_tools/vault-lint/vault_lint.py --self-test >/dev/null",
+      "methods": {
+        "manual": "framework/_tools/vault-lint"
+      },
+      "install": [
+        {
+          "do": "link",
+          "src": "framework/_tools/vault-lint",
+          "dest": "~/AI_Projects/_tools/vault-lint"
+        }
+      ],
+      "entrypoints": {
+        "vault_lint.py": "framework/_tools/vault-lint/vault_lint.py"
+      },
+      "config": [],
+      "requires": [
+        "python3",
+        "workspace"
+      ]
+    },
+    {
+      "id": "harness-lint",
+      "name": "harness-lint",
+      "what": "checks the harness wiring and lanes table; the weekly review runs it",
+      "profiles": [
+        "odin"
+      ],
+      "homepage": "framework/_tools/harness-lint",
+      "license": "MIT",
+      "bundled": true,
+      "optional": false,
+      "verify": "test -f ~/AI_Projects/_tools/harness-lint/harness_lint.py",
+      "methods": {
+        "manual": "framework/_tools/harness-lint"
+      },
+      "install": [
+        {
+          "do": "link",
+          "src": "framework/_tools/harness-lint",
+          "dest": "~/AI_Projects/_tools/harness-lint"
+        }
+      ],
+      "entrypoints": {
+        "harness_lint.py": "framework/_tools/harness-lint/harness_lint.py"
+      },
+      "config": [],
+      "requires": [
+        "python3",
+        "workspace"
+      ]
+    },
+    {
+      "id": "web",
+      "name": "web",
+      "what": "one CLI for every web job: read, crawl, search, act, login, CAPTCHA handoff to your phone",
+      "profiles": [
+        "odin"
+      ],
+      "homepage": "framework/_tools/web",
+      "license": "MIT",
+      "bundled": true,
+      "optional": false,
+      "verify": "command -v web",
+      "methods": {
+        "manual": "framework/_tools/web"
+      },
+      "install": [
+        {
+          "do": "link",
+          "src": "framework/_tools/web",
+          "dest": "~/AI_Projects/_tools/web"
+        },
+        {
+          "do": "uv-tool",
+          "dir": "framework/_tools/web"
+        },
+        {
+          "do": "link",
+          "harness": true,
+          "src": "framework/_tools/web/skill",
+          "dest": "~/.claude/skills/web"
+        }
+      ],
+      "entrypoints": {
+        "web": "framework/_tools/web/web/cli.py"
+      },
+      "config": [
+        {
+          "path": "~/.config/ai-workflow-kit/hosts.env",
+          "keys": [
+            "FREELLMAPI_URL"
+          ],
+          "required": false
+        },
+        {
+          "path": "~/.local/share/web/",
+          "note": "state and logs"
+        }
+      ],
+      "requires": [
+        "uv",
+        "chromium",
+        "agent-browser",
+        "scrapling",
+        "workspace",
+        "hosts-env"
+      ]
+    },
+    {
+      "id": "lane",
+      "name": "lane",
+      "what": "free and local model work with data tiers and a quality gate",
+      "profiles": [
+        "odin"
+      ],
+      "homepage": "framework/_tools/lanes",
+      "license": "MIT",
+      "bundled": true,
+      "optional": true,
+      "verify": "command -v lane",
+      "methods": {
+        "manual": "framework/_tools/lanes"
+      },
+      "install": [
+        {
+          "do": "link",
+          "src": "framework/_tools/lanes",
+          "dest": "~/AI_Projects/_tools/lanes"
+        },
+        {
+          "do": "uv-sync",
+          "dir": "framework/_tools/lanes"
+        },
+        {
+          "do": "link",
+          "src": "framework/_tools/lanes/.venv/bin/lane",
+          "dest": "~/.local/bin/lane"
+        }
+      ],
+      "entrypoints": {
+        "lane": "framework/_tools/lanes/.venv/bin/lane"
+      },
+      "config": [
+        {
+          "path": "~/.config/ai-workflow-kit/hosts.env",
+          "keys": [
+            "FREELLMAPI_URL"
+          ],
+          "required": false
+        },
+        {
+          "path": "framework/_tools/lanes/config"
+        }
+      ],
+      "requires": [
+        "uv",
+        "workspace",
+        "hosts-env"
+      ]
+    },
+    {
+      "id": "weekly-review",
+      "name": "weekly review",
+      "what": "Sunday check of the whole workflow by two short claude -p runs; the doer is not the judge",
+      "profiles": [
+        "odin"
+      ],
+      "homepage": "framework/_tools/weekly-review",
+      "license": "MIT",
+      "bundled": true,
+      "optional": true,
+      "verify": "test -f ~/.config/systemd/user/weekly-review.timer",
+      "os": [
+        "arch",
+        "debian"
+      ],
+      "methods": {
+        "manual": "framework/_tools/weekly-review"
+      },
+      "install": [
+        {
+          "do": "link",
+          "src": "framework/_tools/weekly-review",
+          "dest": "~/AI_Projects/_tools/weekly-review"
+        },
+        {
+          "do": "run",
+          "why": "copy the units and daemon-reload; never enables the timer",
+          "cmd": "framework/_tools/weekly-review/install.sh"
+        }
+      ],
+      "entrypoints": {},
+      "config": [],
+      "requires": [
+        "claude",
+        "harness-lint",
+        "workspace",
+        "vault"
+      ]
+    },
+    {
+      "id": "retention",
+      "name": "retention",
+      "what": "archive-first cleanup of old backups and caches (moves, never deletes)",
+      "profiles": [
+        "odin"
+      ],
+      "homepage": "framework/_tools/retention",
+      "license": "MIT",
+      "bundled": true,
+      "optional": true,
+      "verify": "test -f ~/.config/systemd/user/retain.timer",
+      "os": [
+        "arch",
+        "debian"
+      ],
+      "methods": {
+        "manual": "framework/_tools/retention"
+      },
+      "install": [
+        {
+          "do": "link",
+          "src": "framework/_tools/retention",
+          "dest": "~/AI_Projects/_tools/retention"
+        },
+        {
+          "do": "run",
+          "why": "copy the units and daemon-reload; never enables the timer",
+          "cmd": "framework/_tools/retention/install.sh"
+        }
+      ],
+      "entrypoints": {
+        "retain.py": "framework/_tools/retention/retain.py"
+      },
+      "config": [
+        {
+          "path": "~/.local/share/archive/",
+          "note": "where moved files go, with a manifest per day"
+        }
+      ],
+      "requires": [
+        "python3",
+        "workspace"
+      ]
+    },
+    {
+      "id": "agents-slice",
+      "name": "agents.slice",
+      "what": "CPU and memory ceiling for agent sessions and heavy jobs (claude-slice, heavy)",
+      "profiles": [
+        "odin"
+      ],
+      "homepage": "framework/_tools/agents-slice",
+      "license": "MIT",
+      "bundled": true,
+      "optional": true,
+      "verify": "command -v claude-slice",
+      "os": [
+        "arch",
+        "debian"
+      ],
+      "methods": {
+        "manual": "framework/_tools/agents-slice"
+      },
+      "install": [
+        {
+          "do": "link",
+          "src": "framework/_tools/agents-slice",
+          "dest": "~/AI_Projects/_tools/agents-slice"
+        },
+        {
+          "do": "copy",
+          "src": "framework/_tools/agents-slice/agents.slice",
+          "dest": "~/.config/systemd/user/agents.slice"
+        },
+        {
+          "do": "link",
+          "src": "framework/_tools/agents-slice/claude-slice",
+          "dest": "~/.local/bin/claude-slice"
+        },
+        {
+          "do": "link",
+          "src": "framework/_tools/agents-slice/heavy",
+          "dest": "~/.local/bin/heavy"
+        },
+        {
+          "do": "note",
+          "text": "the slice caps at CPUQuota=1200% and MemoryHigh=24G: lower both on a small laptop"
+        }
+      ],
+      "entrypoints": {
+        "claude-slice": "framework/_tools/agents-slice/claude-slice",
+        "heavy": "framework/_tools/agents-slice/heavy"
+      },
+      "config": [],
+      "requires": [
+        "claude",
+        "workspace"
+      ]
+    },
+    {
+      "id": "review-queue",
+      "name": "Review Queue",
+      "what": "the last 25 items flagged for review, opened from the desktop bar (rq)",
+      "profiles": [
+        "odin"
+      ],
+      "homepage": "framework/_tools/review-queue",
+      "license": "MIT",
+      "bundled": true,
+      "optional": true,
+      "verify": "command -v rq",
+      "os": [
+        "arch"
+      ],
+      "methods": {
+        "manual": "framework/_tools/review-queue"
+      },
+      "install": [
+        {
+          "do": "link",
+          "src": "framework/_tools/review-queue",
+          "dest": "~/AI_Projects/_tools/review-queue"
+        },
+        {
+          "do": "uv-sync",
+          "dir": "framework/_tools/review-queue"
+        },
+        {
+          "do": "link",
+          "src": "framework/_tools/review-queue/.venv/bin/rq",
+          "dest": "~/.local/bin/rq"
+        }
+      ],
+      "entrypoints": {
+        "rq": "framework/_tools/review-queue/.venv/bin/rq"
+      },
+      "config": [],
+      "requires": [
+        "uv",
+        "workspace"
+      ]
+    },
+    {
+      "id": "desk-control",
+      "name": "desk-control MCP",
+      "what": "visible, stoppable screenshot-and-click loop for pixel-only surfaces (needs Hyprland, grim, quickshell, wtype, ydotool)",
+      "profiles": [
+        "odin"
+      ],
+      "homepage": "framework/_tools/desk-control",
+      "license": "MIT",
+      "bundled": true,
+      "optional": true,
+      "verify": "claude mcp get desk-control >/dev/null 2>&1 || test -x framework/_tools/desk-control/.venv/bin/python || python3 -c 'import json, os, sys; s = json.load(open(os.path.expanduser(\"~/.claude.json\"))).get(\"mcpServers\", {}); sys.exit(not any(os.path.basename(v.get(\"command\", \"\")) == \"launch\" and os.path.isfile(os.path.join(os.path.dirname(v.get(\"command\", \"\")), \"computer.py\")) for v in s.values()))' 2>/dev/null",
+      "os": [
+        "arch"
+      ],
+      "methods": {
+        "manual": "framework/_tools/desk-control"
+      },
+      "install": [
+        {
+          "do": "link",
+          "src": "framework/_tools/desk-control",
+          "dest": "~/AI_Projects/_tools/desk-control"
+        },
+        {
+          "do": "run",
+          "why": "install its pinned Python 3.12 runtime and deps with uv, then run its doctor",
+          "cmd": "framework/_tools/desk-control/install"
+        },
+        {
+          "do": "run",
+          "harness": true,
+          "why": "register the MCP server for Claude Code (writes ~/.claude.json)",
+          "cmd": "claude mcp get desk-control >/dev/null 2>&1 || claude mcp add --scope user desk-control -- \"$PWD/framework/_tools/desk-control/launch\" serve Claude"
+        }
+      ],
+      "entrypoints": {
+        "launch": "framework/_tools/desk-control/launch"
+      },
+      "config": [],
+      "requires": [
+        "uv",
+        "claude",
+        "workspace"
+      ]
+    },
+    {
+      "id": "motion",
+      "name": "motion",
+      "what": "motion graphics from code (HTML to MP4) with a self-critique loop",
+      "profiles": [
+        "odin"
+      ],
+      "homepage": "framework/_tools/motion",
+      "license": "MIT",
+      "bundled": true,
+      "optional": true,
+      "verify": "command -v motion",
+      "methods": {
+        "manual": "framework/_tools/motion"
+      },
+      "install": [
+        {
+          "do": "link",
+          "src": "framework/_tools/motion",
+          "dest": "~/AI_Projects/_tools/motion"
+        },
+        {
+          "do": "npm-ci",
+          "dir": "framework/_tools/motion"
+        },
+        {
+          "do": "link",
+          "src": "framework/_tools/motion/bin/motion.mjs",
+          "dest": "~/.local/bin/motion"
+        },
+        {
+          "do": "link",
+          "harness": true,
+          "src": "framework/_tools/motion/skill",
+          "dest": "~/.claude/skills/motion"
+        }
+      ],
+      "entrypoints": {
+        "motion": "framework/_tools/motion/bin/motion.mjs"
+      },
+      "config": [],
+      "requires": [
+        "node",
+        "ffmpeg",
+        "chromium",
+        "workspace"
+      ]
+    },
+    {
+      "id": "jev-browse",
+      "name": "jev-browse",
+      "what": "fast browser agent: a small judge model picks each step, web act runs it",
+      "profiles": [
+        "odin"
+      ],
+      "homepage": "framework/_tools/jev-browse",
+      "license": "MIT",
+      "bundled": true,
+      "optional": true,
+      "verify": "command -v jev-browse",
+      "methods": {
+        "manual": "framework/_tools/jev-browse"
+      },
+      "install": [
+        {
+          "do": "link",
+          "src": "framework/_tools/jev-browse",
+          "dest": "~/AI_Projects/_tools/jev-browse"
+        },
+        {
+          "do": "link",
+          "src": "framework/_tools/jev-browse/jev_browse.py",
+          "dest": "~/.local/bin/jev-browse"
+        },
+        {
+          "do": "link",
+          "harness": true,
+          "src": "framework/_tools/jev-browse/skill",
+          "dest": "~/.claude/skills/jev-browse"
+        }
+      ],
+      "entrypoints": {
+        "jev-browse": "framework/_tools/jev-browse/jev_browse.py"
+      },
+      "config": [
+        {
+          "path": "~/.config/ai-workflow-kit/hosts.env",
+          "keys": [
+            "THOR_OLLAMA_URL"
+          ],
+          "required": false
+        }
+      ],
+      "requires": [
+        "web",
+        "workspace",
+        "hosts-env"
+      ]
+    },
+    {
+      "id": "lane-intel",
+      "name": "lane-intel",
+      "what": "daily: reads model and effort advice, adjusts lanes.json (opt-in job, never max effort)",
+      "profiles": [
+        "odin"
+      ],
+      "homepage": "framework/_tools/lane-intel",
+      "license": "MIT",
+      "bundled": true,
+      "optional": true,
+      "verify": "test -f ~/AI_Projects/_tools/lane-intel/run.sh",
+      "os": [
+        "arch",
+        "debian"
+      ],
+      "methods": {
+        "manual": "framework/_tools/lane-intel"
+      },
+      "install": [
+        {
+          "do": "link",
+          "src": "framework/_tools/lane-intel",
+          "dest": "~/AI_Projects/_tools/lane-intel"
+        },
+        {
+          "do": "note",
+          "text": "optional whisper fallback runs on thor: install the faster-whisper tool there (thor profile)"
+        }
+      ],
+      "entrypoints": {},
+      "config": [
+        {
+          "path": "~/.local/state/lane-intel/"
+        },
+        {
+          "path": "framework/_system/lanes.json"
+        }
+      ],
+      "requires": [
+        "web",
+        "yt-dlp",
+        "claude",
+        "route",
+        "workspace",
+        "vault"
+      ]
+    },
+    {
+      "id": "x-scroll",
+      "name": "x-scroll",
+      "what": "one slow read-only scroll of an X account per day into a vault digest",
+      "profiles": [
+        "odin"
+      ],
+      "homepage": "framework/_tools/x-scroll",
+      "license": "MIT",
+      "bundled": true,
+      "optional": true,
+      "verify": "command -v x-scroll",
+      "os": [
+        "arch",
+        "debian"
+      ],
+      "methods": {
+        "manual": "framework/_tools/x-scroll"
+      },
+      "install": [
+        {
+          "do": "link",
+          "src": "framework/_tools/x-scroll",
+          "dest": "~/AI_Projects/_tools/x-scroll"
+        },
+        {
+          "do": "link",
+          "src": "framework/_tools/x-scroll/xscroll.py",
+          "dest": "~/.local/bin/x-scroll"
+        },
+        {
+          "do": "note",
+          "text": "list the handles and searches to read in ~/.config/x-scroll/watch.json (missing = an empty watch list); the timer comes from the profile's automations and stays off until a supervised logged-in run passes"
+        }
+      ],
+      "entrypoints": {
+        "x-scroll": "framework/_tools/x-scroll/xscroll.py"
+      },
+      "config": [
+        {
+          "path": "~/.config/x-scroll/watch.json"
+        }
+      ],
+      "requires": [
+        "web",
+        "claude",
+        "workspace",
+        "vault"
+      ]
+    },
+    {
+      "id": "secret-firewall-corpus",
+      "name": "secret-firewall corpus",
+      "what": "182-case replay corpus that scores the secret firewall",
+      "profiles": [
+        "odin"
+      ],
+      "homepage": "framework/_tools/secret-firewall-corpus",
+      "license": "MIT",
+      "bundled": true,
+      "optional": true,
+      "verify": "python3 framework/_tools/secret-firewall-corpus/run.py --self-test >/dev/null",
+      "methods": {
+        "manual": "framework/_tools/secret-firewall-corpus"
+      },
+      "install": [
+        {
+          "do": "note",
+          "text": "runs in place: python3 framework/_tools/secret-firewall-corpus/run.py"
+        }
+      ],
+      "entrypoints": {
+        "run.py": "framework/_tools/secret-firewall-corpus/run.py"
+      },
+      "config": [],
+      "requires": [
+        "python3"
+      ]
+    },
+    {
+      "id": "secret-scrub",
+      "name": "secret-scrub",
+      "what": "finds a leaked password in agent transcripts and local databases and overwrites it in place (values never printed)",
+      "profiles": [
+        "odin"
+      ],
+      "homepage": "framework/_tools/secret-scrub",
+      "license": "MIT",
+      "bundled": true,
+      "optional": true,
+      "verify": "test -r framework/_tools/secret-scrub/scrub.py",
+      "methods": {
+        "manual": "framework/_tools/secret-scrub"
+      },
+      "requires": [
+        "python3"
+      ],
+      "install": [
+        {
+          "do": "note",
+          "text": "runs in place: python3 framework/_tools/secret-scrub/scrub.py find ROOT... (then show, confirm, apply, check)"
+        }
+      ],
+      "entrypoints": {
+        "scrub.py": "framework/_tools/secret-scrub/scrub.py"
+      },
+      "config": [
+        {
+          "path": "~/.local/share/secret-scrub/",
+          "note": "candidates and confirmed values, mode 700; SCRUB_STATE overrides"
+        }
+      ]
+    },
+    {
+      "id": "transcript-prune",
+      "name": "transcript-prune",
+      "what": "deletes Codex session logs untouched for 21 days (dry run unless --apply, never under 7 days)",
+      "profiles": [
+        "odin"
+      ],
+      "homepage": "framework/_tools/transcript-prune",
+      "license": "MIT",
+      "bundled": true,
+      "optional": true,
+      "verify": "python3 framework/_tools/transcript-prune/prune_codex.py --self-test >/dev/null",
+      "methods": {
+        "manual": "framework/_tools/transcript-prune"
+      },
+      "requires": [
+        "python3",
+        "codex"
+      ],
+      "install": [
+        {
+          "do": "note",
+          "text": "runs in place: python3 framework/_tools/transcript-prune/prune_codex.py (dry run), add --apply to delete; Claude Code prunes its own transcripts through cleanupPeriodDays"
+        }
+      ],
+      "entrypoints": {
+        "prune_codex.py": "framework/_tools/transcript-prune/prune_codex.py"
+      },
+      "config": [
+        {
+          "path": "~/.codex/sessions/",
+          "note": "CODEX_HOME overrides ~/.codex"
+        }
+      ]
+    },
+    {
+      "id": "open-loops",
+      "name": "open-loops",
+      "what": "find, reconcile, plan, build and close open loops across sessions (Workflow)",
+      "profiles": [
+        "odin"
+      ],
+      "homepage": "framework/_tools/open-loops",
+      "license": "MIT",
+      "bundled": true,
+      "optional": true,
+      "verify": "test -f ~/AI_Projects/_tools/open-loops/prep.py",
+      "methods": {
+        "manual": "framework/_tools/open-loops"
+      },
+      "install": [
+        {
+          "do": "link",
+          "src": "framework/_tools/open-loops",
+          "dest": "~/AI_Projects/_tools/open-loops"
+        },
+        {
+          "do": "link",
+          "src": "framework/.claude/workflows",
+          "dest": "~/AI_Projects/.claude/workflows"
+        }
+      ],
+      "entrypoints": {},
+      "config": [],
+      "requires": [
+        "python3",
+        "claude",
+        "workspace",
+        "vault"
+      ]
+    },
+    {
+      "id": "tg",
+      "name": "tg",
+      "what": "one Telegram group per topic; only heat alerts make a sound; no-op when not configured",
+      "profiles": [
+        "telegram"
+      ],
+      "homepage": "framework/_tools/telegram",
+      "license": "MIT",
+      "bundled": true,
+      "optional": false,
+      "verify": "command -v tg",
+      "methods": {
+        "manual": "framework/_tools/telegram"
+      },
+      "install": [
+        {
+          "do": "link",
+          "src": "framework/_tools/telegram/tg",
+          "dest": "~/.local/bin/tg"
+        },
+        {
+          "do": "link",
+          "harness": true,
+          "src": "framework/_tools/telegram/skill",
+          "dest": "~/.claude/skills/telegram"
+        },
+        {
+          "do": "note",
+          "text": "then: save the bot token as ~/telegram-bot.token (0600), run tg --claim (send its one-time code to the bot from your own account), then tg --discover"
+        }
+      ],
+      "entrypoints": {
+        "tg": "framework/_tools/telegram/tg"
+      },
+      "config": [
+        {
+          "path": "~/telegram-bot.token",
+          "note": "bot token, mode 600; without it tg prints 'telegram not configured' and exits 0"
+        },
+        {
+          "path": "~/.config/telegram/topics.json",
+          "note": "written by tg --claim (owner) and tg --discover (topic groups)"
+        }
+      ],
+      "requires": [
+        "python3"
+      ]
+    },
+    {
+      "id": "tg-admin",
+      "name": "tg-admin",
+      "what": "creates Telegram groups and bots as your own account (needs a logged-in Telegram Desktop on Linux)",
+      "profiles": [
+        "telegram"
+      ],
+      "homepage": "framework/_tools/telegram/README-admin.md",
+      "license": "MIT",
+      "bundled": true,
+      "optional": true,
+      "verify": "command -v tg-admin",
+      "os": [
+        "arch",
+        "debian"
+      ],
+      "methods": {
+        "manual": "framework/_tools/telegram/README-admin.md"
+      },
+      "install": [
+        {
+          "do": "uv-venv",
+          "venv": "~/.local/telegram/venv",
+          "python": "3.12",
+          "packages": [
+            "telethon==1.45.0",
+            "opentele==1.15.1"
+          ]
+        },
+        {
+          "do": "link",
+          "src": "framework/_tools/telegram/tg-admin",
+          "dest": "~/.local/bin/tg-admin"
+        },
+        {
+          "do": "note",
+          "text": "a bot tg-admin creates sends only after (umask 077; install -m 600 ~/.config/telegram/bots/<bot>.token ~/telegram-bot.token) and tg --claim; see profiles/telegram/README.md"
+        }
+      ],
+      "entrypoints": {
+        "tg-admin": "framework/_tools/telegram/tg-admin"
+      },
+      "config": [
+        {
+          "path": "~/.local/share/TelegramDesktop/tdata",
+          "note": "imported once; never a phone number or api_hash"
+        },
+        {
+          "path": "~/.config/telegram/user.session"
+        },
+        {
+          "path": "~/.config/telegram/tg-admin.mode",
+          "note": "own-device or shared: how the session was imported; tg-admin session prints how to revoke it"
+        },
+        {
+          "path": "~/.config/ai-workflow-kit/hosts.env",
+          "keys": [
+            "TG_ADMIN_BOT"
+          ],
+          "required": false
+        }
+      ],
+      "requires": [
+        "uv",
+        "telegram-desktop",
+        "tg"
+      ]
+    },
+    {
+      "id": "server-lane-loki",
+      "name": "loki server setup",
+      "what": "servers/ setup script, lane 'media': base hardening (lid, SSH keys only, firewall, updates, heat watch, alerts) plus the lane's own pieces",
+      "profiles": [
+        "loki"
+      ],
+      "homepage": "servers",
+      "license": "MIT",
+      "bundled": true,
+      "optional": false,
+      "verify": "test -d /opt/homeserver/media || test -d ~/homeserver/media",
+      "os": [
+        "debian",
+        "macos"
+      ],
+      "methods": {
+        "manual": "servers"
+      },
+      "install": [
+        {
+          "do": "run",
+          "os": [
+            "debian"
+          ],
+          "sudo": true,
+          "why": "system setup: packages, sshd, firewall, units",
+          "cmd": "sudo servers/linux/setup.sh media"
+        },
+        {
+          "do": "note",
+          "os": [
+            "debian"
+          ],
+          "text": "setup.sh loads a changed firewall on trial: within 5 minutes, from a NEW ssh session (or the console), run sudo servers/linux/setup.sh --confirm-firewall, or it rolls back by itself."
+        },
+        {
+          "do": "run",
+          "os": [
+            "macos"
+          ],
+          "why": "Mac server setup (asks for your password when it needs it)",
+          "cmd": "servers/macos/setup.sh media"
+        }
+      ],
+      "entrypoints": {},
+      "config": [
+        {
+          "path": "/etc/homeserver/alert.conf",
+          "note": "alert target (ntfy topic or Telegram)"
+        }
+      ],
+      "requires": [
+        "git"
+      ]
+    },
+    {
+      "id": "server-lane-heimdall",
+      "name": "heimdall server setup",
+      "what": "servers/ setup script, lane 'heimdall': base hardening (lid, SSH keys only, firewall, updates, heat watch, alerts) plus the lane's own pieces",
+      "profiles": [
+        "heimdall"
+      ],
+      "homepage": "servers",
+      "license": "MIT",
+      "bundled": true,
+      "optional": false,
+      "verify": "if [ \"$(uname)\" = Darwin ]; then test -d ~/homeserver/heimdall; else test -d /opt/homeserver/heimdall && systemctl is-active --quiet homeserver-firewall.service; fi",
+      "os": [
+        "debian",
+        "macos"
+      ],
+      "methods": {
+        "manual": "servers"
+      },
+      "install": [
+        {
+          "do": "run",
+          "os": [
+            "debian"
+          ],
+          "sudo": true,
+          "why": "system setup: packages, sshd, firewall, units",
+          "cmd": "sudo servers/linux/setup.sh heimdall"
+        },
+        {
+          "do": "note",
+          "os": [
+            "debian"
+          ],
+          "text": "setup.sh loads a changed firewall on trial: within 5 minutes, from a NEW ssh session (or the console), run sudo servers/linux/setup.sh --confirm-firewall, or it rolls back by itself. After that, run the installer again: uptime-kuma and ntfy start only once the firewall is confirmed."
+        },
+        {
+          "do": "run",
+          "os": [
+            "macos"
+          ],
+          "why": "Mac server setup (asks for your password when it needs it)",
+          "cmd": "servers/macos/setup.sh heimdall"
+        }
+      ],
+      "entrypoints": {},
+      "config": [
+        {
+          "path": "/etc/homeserver/alert.conf",
+          "note": "alert target (ntfy topic or Telegram)"
+        }
+      ],
+      "requires": [
+        "git"
+      ]
+    },
+    {
+      "id": "server-lane-thor",
+      "name": "thor server setup",
+      "what": "servers/ setup script, lane 'workhorse': base hardening (lid, SSH keys only, firewall, updates, heat watch, alerts) plus the lane's own pieces",
+      "profiles": [
+        "thor"
+      ],
+      "homepage": "servers",
+      "license": "MIT",
+      "bundled": true,
+      "optional": false,
+      "verify": "test -d /srv/backups || test -f ~/Library/LaunchAgents/org.homeserver.ollama.plist",
+      "os": [
+        "debian",
+        "macos"
+      ],
+      "methods": {
+        "manual": "servers"
+      },
+      "install": [
+        {
+          "do": "run",
+          "os": [
+            "debian"
+          ],
+          "sudo": true,
+          "why": "system setup: packages, sshd, firewall, units",
+          "cmd": "sudo servers/linux/setup.sh workhorse"
+        },
+        {
+          "do": "note",
+          "os": [
+            "debian"
+          ],
+          "text": "setup.sh loads a changed firewall on trial: within 5 minutes, from a NEW ssh session (or the console), run sudo servers/linux/setup.sh --confirm-firewall, or it rolls back by itself."
+        },
+        {
+          "do": "run",
+          "os": [
+            "macos"
+          ],
+          "why": "Mac server setup (asks for your password when it needs it)",
+          "cmd": "servers/macos/setup.sh workhorse"
+        }
+      ],
+      "entrypoints": {},
+      "config": [
+        {
+          "path": "/etc/homeserver/alert.conf",
+          "note": "alert target (ntfy topic or Telegram)"
+        }
+      ],
+      "requires": [
+        "git"
+      ]
+    },
+    {
+      "id": "fleet-wake",
+      "name": "fleet-wake",
+      "what": "heimdall wakes odin or thor once if they drop off unexpectedly (Wake-on-LAN), and honours deliberate sleeps",
+      "profiles": [
+        "heimdall"
+      ],
+      "homepage": "framework/_tools/fleet-wake",
+      "license": "MIT",
+      "bundled": true,
+      "optional": true,
+      "verify": "command -v fleet-wake",
+      "os": [
+        "arch",
+        "debian"
+      ],
+      "methods": {
+        "manual": "framework/_tools/fleet-wake"
+      },
+      "install": [
+        {
+          "do": "copy",
+          "sudo": true,
+          "why": "the unit runs /usr/local/bin/fleet-wake",
+          "src": "framework/_tools/fleet-wake/fleet-wake",
+          "dest": "/usr/local/bin/fleet-wake",
+          "mode": "755"
+        }
+      ],
+      "entrypoints": {
+        "fleet-wake": "framework/_tools/fleet-wake/fleet-wake"
+      },
+      "config": [
+        {
+          "path": "~/.config/ai-workflow-kit/hosts.env",
+          "keys": [
+            "THOR_HOST",
+            "THOR_MAC",
+            "ODIN_HOST",
+            "ODIN_MAC",
+            "THOR_UNLOCK_HOST",
+            "ODIN_UNLOCK_HOST",
+            "LAN_BROADCAST"
+          ],
+          "required": true,
+          "note": "needs at least one HOST + MAC pair (thor or odin); the UNLOCK hosts and LAN_BROADCAST are optional"
+        }
+      ],
+      "requires": [
+        "python3",
+        "hosts-env"
+      ]
+    },
+    {
+      "id": "freellmapi-probe",
+      "name": "freellmapi-probe",
+      "what": "checks the free-model router with a real completion; one silent alert per state change",
+      "profiles": [
+        "heimdall"
+      ],
+      "homepage": "framework/_tools/fleet-probes",
+      "license": "MIT",
+      "bundled": true,
+      "optional": true,
+      "verify": "command -v freellmapi-probe",
+      "methods": {
+        "manual": "framework/_tools/fleet-probes"
+      },
+      "install": [
+        {
+          "do": "link",
+          "src": "framework/_tools/fleet-probes/freellmapi-probe",
+          "dest": "~/.local/bin/freellmapi-probe"
+        }
+      ],
+      "entrypoints": {
+        "freellmapi-probe": "framework/_tools/fleet-probes/freellmapi-probe"
+      },
+      "config": [
+        {
+          "path": "~/.config/ai-workflow-kit/hosts.env",
+          "keys": [
+            "FREELLMAPI_URL"
+          ],
+          "required": true
+        },
+        {
+          "path": "~/.config/freellmapi-probe/key",
+          "note": "router API key, mode 600"
+        }
+      ],
+      "requires": [
+        "python3",
+        "hosts-env"
+      ]
+    },
+    {
+      "id": "disk-probe",
+      "name": "disk-probe",
+      "what": "alerts once when a data disk passes 90 % or is unmounted",
+      "profiles": [
+        "thor"
+      ],
+      "homepage": "framework/_tools/fleet-probes",
+      "license": "MIT",
+      "bundled": true,
+      "optional": true,
+      "verify": "command -v disk-probe",
+      "methods": {
+        "manual": "framework/_tools/fleet-probes"
+      },
+      "install": [
+        {
+          "do": "link",
+          "src": "framework/_tools/fleet-probes/disk-probe",
+          "dest": "~/.local/bin/disk-probe"
+        }
+      ],
+      "entrypoints": {
+        "disk-probe": "framework/_tools/fleet-probes/disk-probe"
+      },
+      "config": [
+        {
+          "path": "~/.config/disk-probe/chat-id"
+        },
+        {
+          "path": "~/telegram-bot.token"
+        }
+      ],
+      "requires": [
+        "python3"
+      ]
+    },
+    {
+      "id": "thor-sleep",
+      "name": "thor-sleep",
+      "what": "suspends thor after an hour with no real work and tells heimdall it is on purpose (fleet-hold)",
+      "profiles": [
+        "thor"
+      ],
+      "homepage": "framework/_tools/fleet-wake/thor",
+      "license": "MIT",
+      "bundled": true,
+      "optional": true,
+      "verify": "command -v thor-sleep",
+      "os": [
+        "arch",
+        "debian"
+      ],
+      "methods": {
+        "manual": "framework/_tools/fleet-wake/thor"
+      },
+      "install": [
+        {
+          "do": "copy",
+          "sudo": true,
+          "why": "root timer runs /usr/local/bin/thor-sleep",
+          "src": "framework/_tools/fleet-wake/thor/thor-sleep",
+          "dest": "/usr/local/bin/thor-sleep",
+          "mode": "755"
+        },
+        {
+          "do": "copy",
+          "sudo": true,
+          "why": "system-sleep hook: every suspend sets heimdall's hold first",
+          "src": "framework/_tools/fleet-wake/thor/fleet-hold",
+          "dest": "/lib/systemd/system-sleep/fleet-hold",
+          "mode": "755"
+        }
+      ],
+      "entrypoints": {
+        "thor-sleep": "framework/_tools/fleet-wake/thor/thor-sleep"
+      },
+      "config": [
+        {
+          "path": "/etc/thor-sleep.disable",
+          "note": "kill switch: touch it and thor never auto-sleeps"
+        }
+      ],
+      "requires": [
+        "python3"
+      ]
+    },
+    {
+      "id": "hermes",
+      "name": "Hermes Agent",
+      "what": "coding harness with session-preserving model switches; optional always-on Telegram gateway",
+      "profiles": [
+        "odin",
+        "heimdall",
+        "loki"
+      ],
+      "homepage": "https://github.com/NousResearch/hermes-agent",
+      "license": "MIT",
+      "bundled": false,
+      "optional": true,
+      "verify": "hermes --version",
+      "methods": {
+        "manual": "curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash -s -- --non-interactive --skip-browser --skip-computer-use"
+      },
+      "requires": [
+        "git"
+      ]
+    },
+    {
+      "id": "helper-wall",
+      "name": "helper-wall",
+      "what": "scrubbed outside questions and jailed public-web workers",
+      "profiles": [
+        "odin"
+      ],
+      "homepage": "framework/_tools/helper-wall",
+      "license": "MIT",
+      "bundled": true,
+      "optional": true,
+      "verify": "command -v helper-wall",
+      "methods": {
+        "manual": "framework/_tools/helper-wall"
+      },
+      "requires": [
+        "python3",
+        "web",
+        "hosts-env"
+      ],
+      "install": [
+        {
+          "do": "link",
+          "src": "framework/_tools/helper-wall/helper-wall",
+          "dest": "~/.local/bin/helper-wall"
+        }
+      ],
+      "entrypoints": {
+        "helper-wall": "framework/_tools/helper-wall/helper-wall"
+      },
+      "config": [
+        {
+          "path": "~/.config/ai-workflow-kit/helper-denylist.json",
+          "note": "guard denylist or {\"denylist\": []}; missing fails closed"
+        },
+        {
+          "path": "~/.config/ai-workflow-kit/freellmapi.key",
+          "note": "router key, mode 600"
+        }
+      ]
+    },
+    {
+      "id": "hermes-kit",
+      "name": "hermes-kit",
+      "what": "one Hermes session across trusted pools, with an outside-helper privacy split",
+      "profiles": [
+        "odin"
+      ],
+      "homepage": "framework/_tools/hermes-kit",
+      "license": "MIT",
+      "bundled": true,
+      "optional": true,
+      "verify": "command -v aihermes",
+      "methods": {
+        "manual": "framework/_tools/hermes-kit/install.sh"
+      },
+      "requires": [
+        "hermes",
+        "helper-wall",
+        "uv",
+        "lane",
+        "workspace",
+        "hosts-env"
+      ],
+      "install": [
+        {
+          "do": "run",
+          "cmd": "bash framework/_tools/hermes-kit/install.sh",
+          "why": "configure the optional Hermes harness, backing up ~/.hermes first",
+          "harness": true
+        }
+      ],
+      "entrypoints": {
+        "aihermes": "framework/_tools/hermes-kit/aihermes"
+      },
+      "config": [
+        {
+          "path": "~/.config/ai-workflow-kit/hosts.env",
+          "keys": [
+            "FREELLMAPI_URL"
+          ],
+          "required": true
+        },
+        {
+          "path": "~/.hermes/config.yaml"
+        },
+        {
+          "path": "~/.hermes/SOUL.md"
+        }
+      ]
+    },
+    {
+      "id": "hermes-loki-gate",
+      "name": "hermes-loki gate",
+      "what": "lets a quarantined second Hermes reach only the router's /v1 API through an ssh reverse tunnel",
+      "profiles": [
+        "odin"
+      ],
+      "homepage": "framework/_tools/hermes-loki",
+      "license": "MIT",
+      "bundled": true,
+      "optional": true,
+      "verify": "loki-llm-gate --self-test",
+      "methods": {
+        "manual": "examples/hermes-loki/README.md"
+      },
+      "requires": [
+        "python3",
+        "thor-wake-proxy"
+      ],
+      "install": [
+        {
+          "do": "link",
+          "src": "framework/_tools/hermes-loki/loki-llm-gate",
+          "dest": "~/.local/bin/loki-llm-gate"
+        },
+        {
+          "do": "link",
+          "src": "framework/_tools/hermes-loki/loki-llm-gate.service",
+          "dest": "~/.config/systemd/user/loki-llm-gate.service"
+        },
+        {
+          "do": "note",
+          "text": "Then: systemctl --user daemon-reload && systemctl --user enable --now loki-llm-gate, and add the aihermes-loki function to ~/.bashrc. See docs/hermes.md#a-second-hermes-on-a-quarantined-box."
+        }
+      ],
+      "entrypoints": {
+        "loki-llm-gate": "framework/_tools/hermes-loki/loki-llm-gate"
+      },
+      "config": [
+        {
+          "path": "~/.config/systemd/user/loki-llm-gate.service",
+          "note": "listens on 127.0.0.1:3006, forwards /v1 to the local thor-wake-proxy on 3002"
+        }
+      ]
+    },
+    {
+      "id": "hermes-loki-desk",
+      "name": "hermes-loki desk helpers",
+      "what": "screenshot and xdotool control of the quarantined box's desktop VM, for its Hermes",
+      "profiles": [
+        "loki"
+      ],
+      "homepage": "framework/_tools/hermes-loki",
+      "license": "MIT",
+      "bundled": true,
+      "optional": true,
+      "verify": "command -v desk-shot",
+      "methods": {
+        "manual": "examples/hermes-loki/README.md"
+      },
+      "requires": [
+        "hermes"
+      ],
+      "install": [
+        {
+          "do": "link",
+          "src": "framework/_tools/hermes-loki/desk-shot",
+          "dest": "~/.local/bin/desk-shot"
+        },
+        {
+          "do": "link",
+          "src": "framework/_tools/hermes-loki/desk-gui",
+          "dest": "~/.local/bin/desk-gui"
+        },
+        {
+          "do": "note",
+          "text": "Needs ImageMagick (magick) on the box, a Host loki-desk ssh entry for the VM with the box's key authorized, and xdotool plus xwd (x11-apps) on the VM."
+        }
+      ],
+      "entrypoints": {
+        "desk-shot": "framework/_tools/hermes-loki/desk-shot",
+        "desk-gui": "framework/_tools/hermes-loki/desk-gui"
+      },
+      "config": [
+        {
+          "path": "~/.ssh/config",
+          "note": "a Host entry for the desktop VM (the scripts call `ssh loki-desk`)"
+        }
+      ]
+    },
+    {
+      "id": "loki-desk-cockpit",
+      "name": "loki desktop helpers (cockpit)",
+      "what": "screenshot and xdotool control of the quarantined box's desktop VM from the cockpit",
+      "profiles": [
+        "odin"
+      ],
+      "homepage": "framework/harness/bin/loki-shot",
+      "license": "MIT",
+      "bundled": true,
+      "optional": true,
+      "verify": "command -v loki-shot",
+      "methods": {
+        "manual": "framework/harness/bin/loki-shot"
+      },
+      "requires": [],
+      "install": [
+        {
+          "do": "link",
+          "src": "framework/harness/bin/loki-shot",
+          "dest": "~/.local/bin/loki-shot"
+        },
+        {
+          "do": "link",
+          "src": "framework/harness/bin/loki-gui",
+          "dest": "~/.local/bin/loki-gui"
+        },
+        {
+          "do": "note",
+          "text": "Needs ImageMagick and a Host loki-desk ssh entry with ProxyJump loki."
+        }
+      ],
+      "entrypoints": {
+        "loki-shot": "framework/harness/bin/loki-shot",
+        "loki-gui": "framework/harness/bin/loki-gui"
+      },
+      "config": [
+        {
+          "path": "~/.ssh/config",
+          "note": "Host loki-desk with ProxyJump loki"
+        }
+      ]
+    },
+    {
+      "id": "thor-wake-proxy",
+      "name": "thor-wake-proxy",
+      "what": "loopback TCP proxy that wakes the router/GPU host before forwarding",
+      "profiles": [
+        "odin",
+        "heimdall"
+      ],
+      "homepage": "framework/_tools/thor-wake-proxy",
+      "license": "MIT",
+      "bundled": true,
+      "optional": true,
+      "verify": "command -v thor-wake-proxy",
+      "methods": {
+        "manual": "framework/_tools/thor-wake-proxy"
+      },
+      "requires": [
+        "python3",
+        "hosts-env"
+      ],
+      "install": [
+        {
+          "do": "link",
+          "src": "framework/_tools/thor-wake-proxy/thor-wake-proxy",
+          "dest": "~/.local/bin/thor-wake-proxy"
+        },
+        {
+          "do": "link",
+          "src": "framework/_tools/thor-wake-proxy/thor-wake-proxy.service",
+          "dest": "~/.config/systemd/user/thor-wake-proxy.service"
+        },
+        {
+          "do": "note",
+          "text": "Configure WAKE_CMD (fleet-wake wake thor or thor-up); daemon-reload and enable the proxy only when needed. See docs/hermes.md."
+        }
+      ],
+      "entrypoints": {
+        "thor-wake-proxy": "framework/_tools/thor-wake-proxy/thor-wake-proxy"
+      },
+      "config": [
+        {
+          "path": "~/.config/ai-workflow-kit/hosts.env",
+          "keys": [
+            "THOR_HOST"
+          ],
+          "required": true
+        }
+      ],
+      "os": [
+        "arch",
+        "debian"
+      ]
+    },
+    {
+      "id": "luks-unlock",
+      "name": "luks-unlock-setup",
+      "what": "one-time setup: heimdall gets its own LUKS key slot so fleet-wake can unlock this machine's disk at boot (optional; read the security note)",
+      "profiles": [
+        "odin",
+        "thor"
+      ],
+      "homepage": "servers/tools/luks-unlock/README.md",
+      "license": "MIT",
+      "bundled": true,
+      "optional": true,
+      "verify": "command -v luks-unlock-setup",
+      "os": [
+        "arch",
+        "debian"
+      ],
+      "methods": {
+        "manual": "servers/tools/luks-unlock"
+      },
+      "install": [
+        {
+          "do": "link",
+          "src": "servers/tools/luks-unlock/luks-unlock-setup",
+          "dest": "~/.local/bin/luks-unlock-setup"
+        },
+        {
+          "do": "note",
+          "text": "nothing runs by itself: set up ssh in the boot image first, then run luks-unlock-setup --name <odin|thor> once (servers/tools/luks-unlock/README.md, security note included)"
+        }
+      ],
+      "entrypoints": {
+        "luks-unlock-setup": "servers/tools/luks-unlock/luks-unlock-setup"
+      },
+      "config": [
+        {
+          "path": "~/.config/ai-workflow-kit/hosts.env",
+          "keys": [
+            "ODIN_UNLOCK_HOST",
+            "THOR_UNLOCK_HOST"
+          ],
+          "required": false,
+          "note": "the boot image's LAN address; --unlock-host overrides it"
+        }
+      ]
+    },
+    {
+      "id": "ssh-keylog",
+      "name": "ssh-keylog",
+      "what": "pass-through forced command that logs what each ssh key runs, plus a per-key report (phase 1 of one limited key per job)",
+      "profiles": [
+        "odin",
+        "heimdall",
+        "thor",
+        "loki"
+      ],
+      "homepage": "servers/tools/ssh-keylog/README.md",
+      "license": "MIT",
+      "bundled": true,
+      "optional": true,
+      "verify": "test -x /usr/local/bin/ssh-keylog",
+      "os": [
+        "arch",
+        "debian"
+      ],
+      "methods": {
+        "manual": "servers/tools/ssh-keylog"
+      },
+      "install": [
+        {
+          "do": "copy",
+          "sudo": true,
+          "why": "authorized_keys forced commands point at /usr/local/bin/ssh-keylog",
+          "src": "servers/tools/ssh-keylog/ssh-keylog",
+          "dest": "/usr/local/bin/ssh-keylog",
+          "mode": "755"
+        },
+        {
+          "do": "link",
+          "src": "servers/tools/ssh-keylog/ssh-keylog-report",
+          "dest": "~/.local/bin/ssh-keylog-report"
+        },
+        {
+          "do": "note",
+          "text": "no key is wrapped yet: wrap one key at a time by hand, keeping a backup of authorized_keys (servers/tools/ssh-keylog/README.md)"
+        }
+      ],
+      "entrypoints": {
+        "ssh-keylog": "servers/tools/ssh-keylog/ssh-keylog",
+        "ssh-keylog-report": "servers/tools/ssh-keylog/ssh-keylog-report"
+      },
+      "config": [
+        {
+          "path": "~/.ssh/authorized_keys",
+          "note": "command=\"/usr/local/bin/ssh-keylog <label>\" in front of each key you watch"
+        }
+      ]
+    },
+    {
+      "id": "ac-power-profile",
+      "name": "ac-power-profile",
+      "what": "laptop power profile follows the charger: performance plugged in, power-saver on battery; stands aside while host-heat cools",
+      "profiles": [
+        "raven"
+      ],
+      "homepage": "servers/tools/ac-power-profile/README.md",
+      "license": "MIT",
+      "bundled": true,
+      "optional": true,
+      "verify": "systemctl is-enabled --quiet ac-power-profile.service",
+      "os": [
+        "arch",
+        "debian"
+      ],
+      "methods": {
+        "manual": "servers/tools/ac-power-profile"
+      },
+      "install": [
+        {
+          "do": "run",
+          "sudo": true,
+          "why": "a udev rule and a root unit that set the power profile",
+          "cmd": "sudo servers/tools/ac-power-profile/install.sh"
+        }
+      ],
+      "entrypoints": {
+        "ac-power-profile": "servers/tools/ac-power-profile/ac-power-profile"
+      },
+      "config": [
+        {
+          "path": "/usr/local/bin/ac-power-profile",
+          "note": "change performance to balanced there if the laptop runs hot on the charger"
+        }
+      ]
+    },
+    {
+      "id": "media-backup",
+      "name": "media-backup",
+      "what": "nightly restic snapshot of the media folders (and Immich's database) to a second drive; wakes thor, clears stale locks (timer off until you enable it)",
+      "profiles": [
+        "thor"
+      ],
+      "homepage": "servers/tools/media-backup/README.md",
+      "license": "MIT",
+      "bundled": true,
+      "optional": true,
+      "verify": "test -x /usr/local/sbin/media-backup",
+      "os": [
+        "arch",
+        "debian"
+      ],
+      "methods": {
+        "manual": "servers/tools/media-backup"
+      },
+      "install": [
+        {
+          "do": "copy",
+          "sudo": true,
+          "why": "the root unit runs /usr/local/sbin/media-backup",
+          "src": "servers/tools/media-backup/media-backup",
+          "dest": "/usr/local/sbin/media-backup",
+          "mode": "755"
+        },
+        {
+          "do": "copy",
+          "sudo": true,
+          "why": "root unit",
+          "src": "servers/tools/media-backup/media-backup.service",
+          "dest": "/etc/systemd/system/media-backup.service",
+          "mode": "644"
+        },
+        {
+          "do": "copy",
+          "sudo": true,
+          "why": "root timer (WakeSystem: wakes thor)",
+          "src": "servers/tools/media-backup/media-backup.timer",
+          "dest": "/etc/systemd/system/media-backup.timer",
+          "mode": "644"
+        },
+        {
+          "do": "note",
+          "text": "timer off: fill /etc/homeserver/media-backup.conf from servers/tools/media-backup/media-backup.conf.example, make the password file, restic init the repository on the second drive, then sudo systemctl daemon-reload && sudo systemctl enable --now media-backup.timer (profiles/thor/README.md)"
+        }
+      ],
+      "entrypoints": {
+        "media-backup": "servers/tools/media-backup/media-backup"
+      },
+      "config": [
+        {
+          "path": "/etc/homeserver/media-backup.conf",
+          "note": "folders, repository on a second drive, password file path"
+        },
+        {
+          "path": "/etc/media-backup.disable",
+          "note": "kill switch: touch it and the nightly run does nothing"
+        }
+      ],
+      "requires": [
+        "restic"
+      ]
+    },
+    {
+      "id": "immich",
+      "name": "Immich",
+      "what": "self-hosted photo and video library with phone backup, tailnet only (optional)",
+      "profiles": [
+        "thor"
+      ],
+      "homepage": "https://immich.app",
+      "license": "AGPL-3.0-only",
+      "bundled": false,
+      "optional": true,
+      "verify": "docker image inspect ghcr.io/immich-app/immich-server:v3.3.3 >/dev/null 2>&1",
+      "methods": {
+        "docker": "docker pull ghcr.io/immich-app/immich-server:v3.3.3",
+        "manual": "see https://immich.app/docs/install/docker-compose"
+      },
+      "requires": [
+        "docker"
+      ]
+    },
+    {
+      "id": "clamav",
+      "name": "ClamAV",
+      "what": "virus signatures and scanner for fleet-scan's weekly Downloads check (optional)",
+      "profiles": [
+        "heimdall"
+      ],
+      "homepage": "https://www.clamav.net",
+      "license": "GPL-2.0-only",
+      "bundled": false,
+      "optional": true,
+      "verify": "command -v clamscan",
+      "methods": {
+        "arch": "sudo pacman -S --needed --noconfirm clamav",
+        "debian": "sudo apt-get install -y clamav clamav-freshclam",
+        "manual": "see https://www.clamav.net"
+      }
+    },
+    {
+      "id": "beszel",
+      "name": "Beszel",
+      "what": "CPU, memory, disk and temperature history for every box; agents dial out, listen on nothing (optional)",
+      "profiles": [
+        "heimdall"
+      ],
+      "homepage": "https://github.com/henrygd/beszel",
+      "license": "MIT",
+      "bundled": false,
+      "optional": true,
+      "verify": "docker image inspect henrygd/beszel:0.21.1 >/dev/null 2>&1",
+      "methods": {
+        "docker": "docker pull henrygd/beszel:0.21.1 && docker pull henrygd/beszel-agent:0.21.1",
+        "manual": "see https://github.com/henrygd/beszel"
+      },
+      "requires": [
+        "docker",
+        "server-lane-heimdall"
+      ]
+    },
+    {
+      "id": "dozzle",
+      "name": "Dozzle",
+      "what": "live container logs in the browser, tailnet only, no actions or shell (optional)",
+      "profiles": [
+        "heimdall"
+      ],
+      "homepage": "https://github.com/amir20/dozzle",
+      "license": "MIT",
+      "bundled": false,
+      "optional": true,
+      "verify": "docker image inspect amir20/dozzle:v11.3.5 >/dev/null 2>&1",
+      "methods": {
+        "docker": "docker pull amir20/dozzle:v11.3.5",
+        "manual": "see https://github.com/amir20/dozzle"
+      },
+      "requires": [
+        "docker",
+        "server-lane-heimdall"
+      ]
+    },
+    {
+      "id": "homepage",
+      "name": "Homepage",
+      "what": "one phone-friendly start page with a tile per service (optional)",
+      "profiles": [
+        "heimdall"
+      ],
+      "homepage": "https://github.com/gethomepage/homepage",
+      "license": "GPL-3.0-only",
+      "bundled": false,
+      "optional": true,
+      "verify": "docker image inspect ghcr.io/gethomepage/homepage:v2.7.0 >/dev/null 2>&1",
+      "methods": {
+        "docker": "docker pull ghcr.io/gethomepage/homepage:v2.7.0",
+        "manual": "see https://github.com/gethomepage/homepage"
+      },
+      "requires": [
+        "docker",
+        "server-lane-heimdall"
+      ]
+    },
+    {
+      "id": "diun",
+      "name": "Diun",
+      "what": "weekly note when an image you run has an update; never updates anything itself (optional)",
+      "profiles": [
+        "heimdall"
+      ],
+      "homepage": "https://github.com/crazy-max/diun",
+      "license": "MIT",
+      "bundled": false,
+      "optional": true,
+      "verify": "docker image inspect crazymax/diun:4.33.1 >/dev/null 2>&1",
+      "methods": {
+        "docker": "docker pull crazymax/diun:4.33.1",
+        "manual": "see https://github.com/crazy-max/diun"
+      },
+      "requires": [
+        "docker",
+        "server-lane-heimdall"
+      ]
+    },
+    {
+      "id": "wazuh",
+      "name": "Wazuh (single node)",
+      "what": "security events from every box (logins, changed system files, rootkit checks, vulnerable packages); needs about 3 GB memory (optional)",
+      "profiles": [
+        "heimdall"
+      ],
+      "homepage": "https://github.com/wazuh/wazuh-docker",
+      "license": "GPL-2.0-only",
+      "bundled": false,
+      "optional": true,
+      "verify": "docker image inspect wazuh/wazuh-manager:4.14.9 >/dev/null 2>&1",
+      "methods": {
+        "manual": "see https://github.com/wazuh/wazuh-docker (clone the v4.14.9 tag, then the steps in profiles/heimdall/README.md, Wazuh: security events)"
+      },
+      "requires": [
+        "docker",
+        "server-lane-heimdall"
+      ]
+    },
+    {
+      "id": "wazuh-mcp",
+      "name": "Wazuh MCP Server",
+      "what": "lets an AI agent read Wazuh alerts and agents; read-only key, no response tools (optional)",
+      "profiles": [
+        "heimdall"
+      ],
+      "homepage": "https://github.com/gensecaihq/Wazuh-MCP-Server",
+      "license": "MIT",
+      "bundled": false,
+      "optional": true,
+      "verify": "docker image inspect ghcr.io/gensecaihq/wazuh-mcp-server:5.0.0 >/dev/null 2>&1",
+      "methods": {
+        "docker": "docker pull ghcr.io/gensecaihq/wazuh-mcp-server:5.0.0",
+        "manual": "see https://github.com/gensecaihq/Wazuh-MCP-Server"
+      },
+      "requires": [
+        "docker",
+        "wazuh"
+      ]
+    },
+    {
+      "id": "wazuh-tg",
+      "name": "wazuh-tg",
+      "what": "sends Wazuh alerts of level 12 and up to your phone, one per rule and box per hour (optional)",
+      "profiles": [
+        "heimdall"
+      ],
+      "homepage": "servers/tools/wazuh-tg",
+      "license": "MIT",
+      "bundled": true,
+      "optional": true,
+      "verify": "command -v wazuh-tg",
+      "os": [
+        "arch",
+        "debian"
+      ],
+      "methods": {
+        "manual": "servers/tools/wazuh-tg"
+      },
+      "install": [
+        {
+          "do": "copy",
+          "sudo": true,
+          "why": "the root service runs /usr/local/bin/wazuh-tg (alerts.json is in a root-only Docker volume)",
+          "src": "servers/tools/wazuh-tg/wazuh-tg",
+          "dest": "/usr/local/bin/wazuh-tg",
+          "mode": "755"
+        }
+      ],
+      "entrypoints": {
+        "wazuh-tg": "servers/tools/wazuh-tg/wazuh-tg"
+      },
+      "config": [
+        {
+          "path": "/etc/wazuh-tg/env",
+          "note": "optional: NOTIFY_USER, WAZUH_ALERTS, MIN_LEVEL (template servers/tools/wazuh-tg/env.example), mode 600"
+        },
+        {
+          "path": "/var/lib/wazuh-tg/HALT",
+          "note": "kill switch: touch it and alerts are read but not sent"
+        }
+      ],
+      "requires": [
+        "python3",
+        "wazuh",
+        "server-lane-heimdall"
+      ]
+    },
+    {
+      "id": "fleet-scan",
+      "name": "fleet-scan",
+      "what": "weekly read-only compromise check plus ClamAV over every box's Downloads, one message (optional)",
+      "profiles": [
+        "heimdall"
+      ],
+      "homepage": "servers/tools/fleet-scan",
+      "license": "MIT",
+      "bundled": true,
+      "optional": true,
+      "verify": "command -v fleet-scan",
+      "os": [
+        "arch",
+        "debian"
+      ],
+      "methods": {
+        "manual": "servers/tools/fleet-scan"
+      },
+      "install": [
+        {
+          "do": "copy",
+          "sudo": true,
+          "why": "the root timer runs /usr/local/bin/fleet-scan",
+          "src": "servers/tools/fleet-scan/fleet-scan",
+          "dest": "/usr/local/bin/fleet-scan",
+          "mode": "755"
+        },
+        {
+          "do": "copy",
+          "sudo": true,
+          "why": "heimdall checks itself with the same program the other boxes run",
+          "src": "servers/tools/fleet-scan/fleet-triage",
+          "dest": "/usr/local/sbin/fleet-triage",
+          "mode": "755"
+        },
+        {
+          "do": "note",
+          "text": "fleet-scan: put your boxes in /etc/fleet-scan/hosts (template servers/tools/fleet-scan/hosts.example), make its key, and on each box install fleet-triage, its sudoers line and the command= key line (profiles/heimdall/README.md, fleet-scan). Then: fleet-scan --self-test; sudo fleet-scan --dry-run"
+        }
+      ],
+      "entrypoints": {
+        "fleet-scan": "servers/tools/fleet-scan/fleet-scan"
+      },
+      "config": [
+        {
+          "path": "/etc/fleet-scan/hosts",
+          "note": "name=user@address [port=N] [wake=MAC] lines, mode 600"
+        },
+        {
+          "path": "/etc/fleet-scan/fleet-scan.conf",
+          "note": "optional: PORT, NOTIFY_USER, GLOBAL_HALT, WAKE_BROADCAST"
+        },
+        {
+          "path": "/var/lib/fleet-scan/HALT",
+          "note": "kill switch: touch it and the weekly run does nothing"
+        }
+      ],
+      "requires": [
+        "python3",
+        "clamav",
+        "server-lane-heimdall"
+      ]
+    }
+  ]
+}

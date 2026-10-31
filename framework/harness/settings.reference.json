@@ -1,0 +1,317 @@
+{
+  "cleanupPeriodDays": 21,
+  "desktopSessionCleanupPeriodDays": 21,
+  "env": {
+    "BASH_MAX_OUTPUT_LENGTH": "150000",
+    "AI_PROJECTS_ROOT": "$HOME/AI_Projects",
+    "CHROME_PATH": "/usr/bin/chromium",
+    "OLLAMA_HOST": "http://thor:11434"
+  },
+  "permissions": {
+    "allow": [
+      "Bash(pacman *)",
+      "Bash(yay *)",
+      "Bash(paru *)",
+      "Bash(omarchy *)",
+      "Bash(npm install -g *)",
+      "Bash(pnpm add -g *)",
+      "Bash(pip install *)",
+      "Bash(pipx install *)",
+      "Bash(uv tool install *)",
+      "Bash(brew install *)",
+      "Bash(cargo install *)",
+      "Bash(go install *)",
+      "Bash(cd * && grep *)",
+      "Bash(cd * && cat *)",
+      "Bash(cd * && ls *)",
+      "Bash(cd * && rg *)"
+    ],
+    "deny": [],
+    "defaultMode": "bypassPermissions",
+    "blockReadsOutsideWorkingDirectories": false
+  },
+  "model": "opus",
+  "skillOverrides": {
+    "anthropic-skills:brand-guidelines": "off",
+    "anthropic-skills:docx": "off",
+    "anthropic-skills:google-workspace": "off",
+    "anthropic-skills:import-memory": "off",
+    "anthropic-skills:mcp-builder": "off",
+    "anthropic-skills:morning": "off",
+    "anthropic-skills:pdf": "off",
+    "anthropic-skills:pptx": "off",
+    "anthropic-skills:research-to-obsidian": "off",
+    "anthropic-skills:skill-creator": "off",
+    "anthropic-skills:web-artifacts-builder": "off",
+    "anthropic-skills:xlsx": "off",
+    "claude-in-chrome": "off",
+    "code-review": "user-invocable-only",
+    "codex-goal-dispatcher": "user-invocable-only",
+    "fewer-permission-prompts": "user-invocable-only",
+    "freellmapi": "user-invocable-only",
+    "init": "user-invocable-only",
+    "jev-browse": "user-invocable-only",
+    "keybindings-help": "user-invocable-only",
+    "lane": "user-invocable-only",
+    "loop": "user-invocable-only",
+    "open-loops": "user-invocable-only",
+    "plugin-authoring": "user-invocable-only",
+    "ponytail:ponytail-audit": "off",
+    "ponytail:ponytail-debt": "off",
+    "ponytail:ponytail-gain": "off",
+    "ponytail:ponytail-help": "off",
+    "ponytail:ponytail-review": "off",
+    "run": "user-invocable-only",
+    "security-review": "user-invocable-only",
+    "simplify": "user-invocable-only",
+    "superpowers:diagnosing-superpowers": "off",
+    "superpowers:using-superpowers": "off",
+    "superpowers:writing-skills": "off",
+    "telegram": "user-invocable-only",
+    "x-pulse": "off",
+    "x-read": "off"
+  },
+  "deniedMcpServers": [
+    {
+      "serverUrl": "https://*firecrawl*"
+    },
+    {
+      "serverName": "firecrawl"
+    }
+  ],
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Bash|Read",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$HOME/.claude/hooks/secret-firewall/detect-secrets.py\"",
+            "timeout": 10
+          }
+        ]
+      },
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 -I -S $HOME/.claude/hooks/web-taint/supervise.py",
+            "timeout": 60
+          }
+        ]
+      },
+      {
+        "matcher": "Artifact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "PYTHONPATH=$HOME/AI_Projects/_tools/review-queue /usr/bin/python3 -m review_queue.artifact_hook",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "Stop": [],
+    "PreToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$HOME/.claude/hooks/dispatch/dispatch.sh\" PreToolUse || { echo \"safety hook dispatcher could not run (exit $?): tool call blocked (fail closed)\" >&2; exit 2; }",
+            "timeout": 90
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$HOME/.claude/hooks/herdr-agent-state.sh\" session",
+            "timeout": 10
+          }
+        ]
+      },
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$HOME/AI_Projects/pipeline/handoff-v2/bin/handoff-start.sh\"",
+            "timeout": 15
+          },
+          {
+            "type": "command",
+            "command": "bash \"$HOME/AI_Projects/.claude/hooks/inject-vault-boot.sh\"",
+            "timeout": 15
+          }
+        ]
+      },
+      {
+        "matcher": "startup",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$HOME/AI_Projects/_tools/retention/repatch.py\" >/dev/null; \"$HOME/.local/bin/chrome-devtools-repatch\" >/dev/null",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$HOME/.claude/hooks/github-publish-nudge.sh\"",
+            "timeout": 5
+          },
+          {
+            "type": "command",
+            "command": "bash \"$HOME/AI_Projects/_tools/vault-rag/hook-user-prompt.sh\"",
+            "timeout": 8
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$HOME/AI_Projects/pipeline/handoff-v2/bin/handoff-end.sh\"",
+            "timeout": 15
+          }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$HOME/AI_Projects/pipeline/handoff-v2/bin/handoff-precompact.sh\"",
+            "timeout": 15
+          }
+        ]
+      }
+    ],
+    "SubagentStart": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$HOME/AI_Projects/pipeline/handoff-v2/bin/handoff-subagent.sh\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PostToolUseFailure": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 -I -S $HOME/.claude/hooks/web-taint/supervise.py",
+            "timeout": 60
+          }
+        ]
+      }
+    ]
+  },
+  "enabledPlugins": {
+    "chrome-devtools-mcp@claude-plugins-official": true,
+    "ponytail@ponytail": true,
+    "caveman@caveman": false,
+    "superpowers@superpowers-marketplace": true,
+    "impeccable@impeccable": true,
+    "frontend-design@claude-plugins-official": true
+  },
+  "extraKnownMarketplaces": {
+    "claude-plugins-official": {
+      "source": {
+        "source": "github",
+        "repo": "anthropics/claude-plugins-official"
+      }
+    },
+    "ponytail": {
+      "source": {
+        "source": "github",
+        "repo": "DietrichGebert/ponytail"
+      }
+    },
+    "caveman": {
+      "source": {
+        "source": "github",
+        "repo": "JuliusBrussee/caveman"
+      }
+    },
+    "impeccable": {
+      "source": {
+        "source": "github",
+        "repo": "pbakaus/impeccable"
+      }
+    },
+    "superpowers-marketplace": {
+      "source": {
+        "source": "github",
+        "repo": "obra/superpowers-marketplace"
+      }
+    }
+  },
+  "outputStyle": "Signal",
+  "sandbox": {
+    "enabled": false
+  },
+  "effortLevel": "high",
+  "modelSettings": {
+    "claude-sonnet-5": {
+      "effortLevel": "high"
+    },
+    "claude-opus-5-5": {
+      "effortLevel": "xhigh"
+    },
+    "claude-sonnet-5-5": {
+      "effortLevel": "xhigh"
+    },
+    "claude-fable-5-1": {
+      "effortLevel": "xhigh"
+    }
+  },
+  "autoCompactWindow": 400000,
+  "autoUpdatesChannel": "latest",
+  "tui": "fullscreen",
+  "autoMemoryDirectory": "~/AI_Projects/_system/second-brain/harness-memory",
+  "skipDangerousModePermissionPrompt": true,
+  "skipWorkflowUsageWarning": true,
+  "theme": "dark",
+  "switchModelsOnFlag": false,
+  "agentPushNotifEnabled": true,
+  "autoMode": {
+    "allow": [
+      "$defaults",
+      "Installing system software via pacman, yay, paru, brew, npm, pip, pipx, cargo, or go",
+      "Running omarchy package/service commands to configure the desktop"
+    ],
+    "soft_deny": [
+      "$defaults"
+    ]
+  },
+  "disabledMcpServers": [
+    "claude.ai Vercel",
+    "claude.ai Supabase",
+    "claude.ai Granola",
+    "claude.ai Firecrawl",
+    "claude.ai Google Calendar",
+    "claude-in-chrome"
+  ]
+}

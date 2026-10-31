@@ -1,0 +1,10 @@
+[Unit]
+Description=Wake unexpectedly offline Odin or Thor once
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# ODIN_/THOR_ HOST and MAC, ODIN_UNLOCK_HOST, LAN_BROADCAST (fleet-wake also reads the file itself)
+EnvironmentFile=-%h/.config/ai-workflow-kit/hosts.env
+ExecStart=/usr/local/bin/fleet-wake check

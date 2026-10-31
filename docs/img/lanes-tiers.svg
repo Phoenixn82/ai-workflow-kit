@@ -1,0 +1,94 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 540" width="960" height="540" role="img" aria-labelledby="title desc" font-family="ui-sans-serif, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif">
+  <title id="title">Lanes and data tiers</title>
+  <desc id="desc">Text work is sent with lane class --tier tier. An admission gate checks whether the class passed evals; if not, Claude or Codex handles it. If it did, the data tier decides the destination: public data may go to free cloud models, business data only to vetted no-retention providers, and business-pii and private data only to the local model on thor, so it never leaves your own hardware.</desc>
+  <defs>
+    <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerUnits="userSpaceOnUse" markerWidth="10" markerHeight="10" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#cbd5e1"/></marker>
+    <marker id="ag" viewBox="0 0 10 10" refX="9" refY="5" markerUnits="userSpaceOnUse" markerWidth="10" markerHeight="10" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#4ade80"/></marker>
+    <marker id="aa" viewBox="0 0 10 10" refX="9" refY="5" markerUnits="userSpaceOnUse" markerWidth="10" markerHeight="10" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#fbbf24"/></marker>
+  </defs>
+  <rect width="960" height="540" rx="20" fill="#0f172a"/>
+
+  <text x="32" y="44" font-size="22" font-weight="700" fill="#f8fafc">Data tiers decide where text work may go</text>
+
+  <!-- command -->
+  <rect x="32" y="70" width="290" height="48" rx="10" fill="#1e293b" stroke="#4ade80" stroke-width="1.5"/>
+  <text x="177" y="99" font-size="15" font-weight="700" fill="#f8fafc" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace">lane &lt;class&gt; --tier &lt;tier&gt;</text>
+  <line x1="322" y1="94" x2="384" y2="94" stroke="#cbd5e1" stroke-width="2" marker-end="url(#ah)"/>
+
+  <!-- gate -->
+  <rect x="386" y="70" width="240" height="48" rx="10" fill="#1e293b" stroke="#cbd5e1" stroke-width="1.5"/>
+  <text x="506" y="90" font-size="15" font-weight="700" fill="#f8fafc" text-anchor="middle">admission gate</text>
+  <text x="506" y="108" font-size="13" fill="#cbd5e1" text-anchor="middle">did this class pass evals?</text>
+
+  <!-- no branch -->
+  <line x1="626" y1="94" x2="700" y2="94" stroke="#cbd5e1" stroke-width="2" marker-end="url(#ah)"/>
+  <text x="663" y="86" font-size="13" fill="#cbd5e1" text-anchor="middle">no</text>
+  <rect x="702" y="70" width="226" height="48" rx="10" fill="#1e293b" stroke="#cbd5e1" stroke-width="1.5"/>
+  <text x="805" y="90" font-size="15" font-weight="700" fill="#fb923c" text-anchor="end">Claude</text><text x="815" y="90" font-size="15" font-weight="700" fill="#cbd5e1" text-anchor="middle">/</text><text x="825" y="90" font-size="15" font-weight="700" fill="#2dd4bf">Codex</text>
+  <text x="815" y="108" font-size="13" fill="#cbd5e1" text-anchor="middle">handles it instead</text>
+
+  <!-- yes branch -->
+  <line x1="506" y1="118" x2="506" y2="176" stroke="#4ade80" stroke-width="2" marker-end="url(#ag)"/>
+  <text x="516" y="152" font-size="13" fill="#4ade80">yes: the tier picks the lane</text>
+
+  <!-- table header -->
+  <g font-size="13" font-weight="700" fill="#94a3b8" letter-spacing="1">
+    <text x="32" y="196">TIER</text>
+    <text x="300" y="196">MAY GO TO</text>
+  </g>
+
+  <!-- tier badges -->
+  <g>
+    <rect x="32" y="206" width="200" height="56" rx="10" fill="#1e293b" stroke="#475569"/>
+    <rect x="32" y="272" width="200" height="56" rx="10" fill="#1e293b" stroke="#475569"/>
+    <rect x="32" y="360" width="200" height="56" rx="10" fill="#1e293b" stroke="#f87171" stroke-opacity="0.7"/>
+    <rect x="32" y="426" width="200" height="56" rx="10" fill="#1e293b" stroke="#f87171" stroke-opacity="0.7"/>
+  </g>
+  <g font-size="15" font-weight="700" fill="#f8fafc" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace">
+    <text x="48" y="230">public</text>
+    <text x="48" y="296">business</text>
+    <text x="48" y="384">business-pii</text>
+    <text x="48" y="450">private</text>
+  </g>
+  <g font-size="13" fill="#cbd5e1">
+    <text x="48" y="250">open code, public docs</text>
+    <text x="48" y="316">your work, no personal data</text>
+    <text x="48" y="404">client personal data</text>
+    <text x="48" y="470">your private data</text>
+  </g>
+
+  <!-- arrows to destinations -->
+  <line x1="236" y1="234" x2="296" y2="234" stroke="#4ade80" stroke-width="2" marker-end="url(#ag)"/>
+  <line x1="236" y1="300" x2="296" y2="300" stroke="#4ade80" stroke-width="2" marker-end="url(#ag)"/>
+  <line x1="236" y1="388" x2="296" y2="388" stroke="#fbbf24" stroke-width="2" marker-end="url(#aa)"/>
+  <line x1="236" y1="454" x2="296" y2="454" stroke="#fbbf24" stroke-width="2" marker-end="url(#aa)"/>
+
+  <!-- destinations -->
+  <rect x="300" y="206" width="628" height="56" rx="10" fill="#4ade80" fill-opacity="0.08" stroke="#4ade80" stroke-width="1.5"/>
+  <path d="M322,246 h26 a8,8 0 0 0 0,-16 a11,11 0 0 0 -21,-3 a7,7 0 0 0 -5,19 z" fill="none" stroke="#4ade80" stroke-width="2" stroke-linejoin="round"/>
+  <text x="366" y="230" font-size="15" font-weight="700" fill="#f8fafc">Free cloud models</text>
+  <text x="366" y="250" font-size="13" fill="#cbd5e1">any free provider through the router</text>
+
+  <rect x="300" y="272" width="628" height="56" rx="10" fill="#4ade80" fill-opacity="0.08" stroke="#4ade80" stroke-width="1.5"/>
+  <path d="M322,312 h26 a8,8 0 0 0 0,-16 a11,11 0 0 0 -21,-3 a7,7 0 0 0 -5,19 z" fill="none" stroke="#4ade80" stroke-width="2" stroke-linejoin="round"/>
+  <path d="M335,298 v-3 a4,4 0 0 1 8,0 v3" fill="none" stroke="#4ade80" stroke-width="1.75"/>
+  <rect x="332" y="298" width="14" height="10" rx="2" fill="#4ade80"/>
+  <text x="366" y="296" font-size="15" font-weight="700" fill="#f8fafc">Vetted no-retention providers</text>
+  <text x="366" y="316" font-size="13" fill="#cbd5e1">only providers vetted not to keep your data</text>
+
+  <!-- boundary -->
+  <line x1="24" y1="344" x2="936" y2="344" stroke="#f87171" stroke-width="1.75" stroke-dasharray="7 5"/>
+  <rect x="566" y="332" width="362" height="24" rx="12" fill="#0f172a" stroke="#f87171"/>
+  <text x="747" y="349" font-size="13" fill="#fca5a5" text-anchor="middle">below this line, data never leaves your hardware</text>
+
+  <rect x="300" y="360" width="628" height="122" rx="12" fill="#fbbf24" fill-opacity="0.08" stroke="#fbbf24" stroke-width="1.5"/>
+  <rect x="324" y="390" width="34" height="62" rx="4" fill="#334155" stroke="#fbbf24" stroke-width="2"/>
+  <line x1="330" y1="400" x2="352" y2="400" stroke="#fbbf24" stroke-width="2"/>
+  <line x1="330" y1="408" x2="352" y2="408" stroke="#fbbf24" stroke-width="2"/>
+  <circle cx="341" cy="432" r="9" fill="none" stroke="#fbbf24" stroke-width="2"/>
+  <text x="380" y="414" font-size="15" font-weight="700" fill="#f8fafc">Local model on thor only</text>
+  <text x="380" y="434" font-size="13" fill="#cbd5e1">runs on your own GPU box, reached over the private tailnet</text>
+  <text x="380" y="452" font-size="13" fill="#cbd5e1">no cloud fallback, even if the local model is busy</text>
+
+  <text x="480" y="518" font-size="14" fill="#94a3b8" text-anchor="middle">Only classes that passed evals run on free lanes; everything else goes to Claude or Codex.</text>
+</svg>

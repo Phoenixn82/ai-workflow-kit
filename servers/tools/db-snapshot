@@ -1,0 +1,86 @@
+#!/usr/bin/env python3
+"""db-snapshot ROOT OUTDIR: a consistent copy of every SQLite database (*.db) under ROOT, into OUTDIR.
+
+A plain file copy of a database that is being written can be torn; sqlite3's backup API copies a consistent
+state. loki runs this nightly before thor pulls the backups (db-snapshot.timer), so the pulled copy always has a
+good database next to the live file. Copies are named <path_with_underscores>-<YYYY-MM-DD>.db; a copy older than
+7 days in OUTDIR is removed, nothing else is. Exit 1 if any database could not be copied.
+    db-snapshot /opt/homeserver/media/jellyfin/config /opt/homeserver/media/db-snapshots
+    db-snapshot --self-test
+"""
+import datetime
+import os
+import sqlite3
+import sys
+import tempfile
+import time
+from pathlib import Path
+
+KEEP_DAYS = 7
+
+
+def snapshot(root, out, today=None):
+    root, out = Path(root), Path(out)
+    today = today or datetime.date.today().isoformat()
+    out.mkdir(parents=True, exist_ok=True)
+    bad = 0
+    for db in sorted(root.rglob("*.db")):
+        if not db.is_file() or db.stat().st_size == 0 or out in db.parents:
+            continue
+        dest = out / f"{str(db.relative_to(root)).replace(os.sep, '_')[:-3]}-{today}.db"
+        tmp = dest.with_suffix(".db.tmp")
+        try:
+            src = sqlite3.connect(f"file:{db}?mode=ro", uri=True, timeout=30)
+            dst = sqlite3.connect(tmp)
+            with dst:
+                src.backup(dst)
+            dst.close()
+            src.close()
+            tmp.replace(dest)
+            print(f"db-snapshot: {db} -> {dest}")
+        except sqlite3.Error as e:  # not a database, or locked past the timeout
+            tmp.unlink(missing_ok=True)
+            print(f"db-snapshot: {db}: {e}", file=sys.stderr)
+            bad += 1
+    cutoff = time.time() - KEEP_DAYS * 86400
+    for old in out.glob("*-????-??-??.db"):
+        if old.stat().st_mtime < cutoff:
+            old.unlink()
+    return 1 if bad else 0
+
+
+def self_test():
+    with tempfile.TemporaryDirectory() as d:
+        root, out = Path(d) / "config", Path(d) / "snaps"
+        (root / "data").mkdir(parents=True)
+        live = sqlite3.connect(root / "data" / "library.db")
+        live.execute("create table t (x)")
+        live.execute("insert into t values (42)")
+        live.commit()
+        (root / "notes.db").write_text("not a database")
+        (root / "empty.db").touch()
+        assert snapshot(root, out, "2026-10-12") == 1          # the fake one is reported, the real one copied
+        copy = out / "data_library-2026-10-12.db"
+        assert sqlite3.connect(copy).execute("select x from t").fetchone() == (42,)
+        assert not list(out.glob("*.tmp")) and not (out / "empty-2026-10-12.db").exists()
+        old = out / "data_library-2026-01-01.db"
+        old.write_bytes(copy.read_bytes())
+        os.utime(old, (0, 0))
+        (root / "notes.db").unlink()
+        assert snapshot(root, out, "2026-10-13") == 0 and not old.exists() and copy.exists()
+        live.close()
+    print("self-test passed")
+    return 0
+
+
+def main(argv):
+    if argv == ["--self-test"]:
+        return self_test()
+    if len(argv) != 2:
+        print(__doc__.strip(), file=sys.stderr)
+        return 2
+    return snapshot(*argv)
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

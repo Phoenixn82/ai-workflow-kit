@@ -1,0 +1,11 @@
+[Unit]
+Description=lane-intel: Theo (YouTube + X) and slopalytics -> lane stance -> _system/lanes.json
+After=network-online.target
+
+[Service]
+Type=oneshot
+Nice=10
+Slice=agents.slice
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=%h/AI_Projects/_tools/lane-intel/run.sh
+TimeoutStartSec=2h

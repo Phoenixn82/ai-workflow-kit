@@ -1,0 +1,13 @@
+[Unit]
+Description=x-scroll: one read-only X timeline scroll (odin identity browser via web act) + Haiku distill to Research/x
+After=network-online.target
+
+[Service]
+Type=oneshot
+Nice=10
+Slice=agents.slice
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+# cool: waits for odin < 75 C, then runs capped at 1 CPU. The session itself stops at 85 C. distill only runs after a
+# session that exited 0 and skips when today's note is already newer than the captures.
+ExecStart=/bin/sh -c 'cool %h/AI_Projects/_tools/x-scroll/xscroll.py session --scheduled && %h/AI_Projects/_tools/x-scroll/xscroll.py distill'
+TimeoutStartSec=50min

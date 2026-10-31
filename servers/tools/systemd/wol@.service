@@ -1,0 +1,14 @@
+# Keep Wake-on-LAN armed on a wired port across reboots (many drivers reset it at boot).
+# Enable: systemctl enable --now wol@eth0.service   (name from: ip -br link)
+# Check:  ethtool eth0 | grep Wake-on   -> "Wake-on: g"
+[Unit]
+Description=Enable Wake-on-LAN (magic packet) on %i
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/sbin/ethtool -s %i wol g
+
+[Install]
+WantedBy=multi-user.target

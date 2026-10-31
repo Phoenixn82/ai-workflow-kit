@@ -1,0 +1,48 @@
+{
+  "_comment": "Copy to project-map.json. A session is filed by what it touched (paths edited, ssh hosts, keywords in your own words), never by the folder it started in. paths: prefix match on path boundaries; a trailing * is a raw prefix. hosts: ssh targets. keywords: case-insensitive matches in your own messages.",
+  "noise": [
+    "/tmp/",
+    "~/.claude/projects/",
+    "~/AI_Projects/_system/second-brain/index.md"
+  ],
+  "projects": {
+    "my-website": {
+      "about": "Personal site and blog",
+      "paths": [
+        "~/AI_Projects/projects/my-website"
+      ],
+      "keywords": [
+        "my website",
+        "blog post"
+      ]
+    },
+    "home-fleet": {
+      "about": "Headless home servers: media, heimdall, workhorse",
+      "paths": [
+        "~/AI_Projects/fleet"
+      ],
+      "hosts": [
+        "heimdall",
+        "workhorse",
+        "mediabox"
+      ],
+      "keywords": [
+        "jellyfin",
+        "tailscale",
+        "heimdall"
+      ]
+    },
+    "workflow": {
+      "about": "Skills, hooks and the AI workflow itself",
+      "paths": [
+        "~/AI_Projects/_system/skills",
+        "~/AI_Projects/_tools"
+      ],
+      "keywords": [
+        "skill",
+        "hook",
+        "workflow"
+      ]
+    }
+  }
+}

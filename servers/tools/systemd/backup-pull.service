@@ -1,0 +1,12 @@
+[Unit]
+Description=Pull other boxes' service data to this box (backup-pull)
+Wants=network-online.target
+After=network-online.target tailscaled.service
+OnFailure=alert@%n.service
+
+[Service]
+Type=oneshot
+# User= comes from the drop-in setup.sh writes (backup-pull.service.d/10-user.conf): the owner of /srv/backups
+ExecStart=/usr/local/bin/backup-pull
+Nice=10
+IOSchedulingClass=idle

@@ -1,0 +1,11 @@
+# Intel Quick Sync / VA-API hardware transcoding for Jellyfin (Linux with an Intel or AMD iGPU).
+# Enable it by adding this file to COMPOSE_FILE in .env:
+#   COMPOSE_FILE=compose.yaml:compose.hwaccel.yaml
+# RENDER_GID = the group id that owns the GPU device:  stat -c %g /dev/dri/renderD128
+# Then in Jellyfin: Dashboard -> Playback -> Transcoding -> Intel QuickSync (QSV) or VAAPI, device /dev/dri/renderD128.
+services:
+  jellyfin:
+    group_add:
+      - "${RENDER_GID:-992}"
+    devices:
+      - /dev/dri:/dev/dri

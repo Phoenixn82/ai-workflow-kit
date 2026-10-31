@@ -1,0 +1,17 @@
+triage: {lane: extract, kind: checkable, check: null, public_facing: false, volume: low}
+label-text: {lane: extract, kind: checkable, check: null, public_facing: false, volume: high}
+sentinel: {lane: extract, kind: checkable, check: null, public_facing: false, volume: low}
+extract-json: {lane: extract, kind: checkable, check: json_fields, public_facing: false, volume: low}
+classify: {lane: extract, kind: checkable, check: null, public_facing: false, volume: high}
+code-small: {lane: code, kind: checkable, check: pytests, public_facing: false, volume: low}
+sql: {lane: code, kind: checkable, check: sql, public_facing: false, volume: low}
+regex: {lane: code, kind: checkable, check: regex, public_facing: false, volume: low}
+systemd-calendar: {lane: code, kind: checkable, check: oncalendar, public_facing: false, volume: low}
+commit-msg: {lane: writer, kind: judgment, check: null, public_facing: false, volume: low}
+log-triage: {lane: ops, kind: judgment, check: null, public_facing: false, volume: low}
+summary: {lane: writer, kind: judgment, check: null, public_facing: false, volume: low}
+brief: {lane: writer, kind: judgment, check: null, public_facing: false, volume: low}
+digest: {lane: writer, kind: judgment, check: null, public_facing: false, volume: low}
+copy-public: {lane: writer, kind: judgment, check: null, public_facing: true, volume: low}
+translate-sms: {lane: writer, kind: judgment, check: null, public_facing: true, volume: low}
+lead-extract: {lane: extract, kind: checkable, check: json_fields, public_facing: false, volume: low, tier: business-pii}

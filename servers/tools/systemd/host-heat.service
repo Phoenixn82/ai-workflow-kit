@@ -1,0 +1,7 @@
+[Unit]
+Description=Heat watch: record temperatures, cool down when hot, clean shutdown if cooling fails
+
+[Service]
+Type=oneshot
+TimeoutStartSec=50
+ExecStart=/usr/local/bin/host-heat --check

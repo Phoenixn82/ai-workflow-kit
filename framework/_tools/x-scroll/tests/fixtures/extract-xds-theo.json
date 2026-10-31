@@ -1,0 +1,192 @@
+{
+ "v": 2,
+ "url": "https://x.com/theo",
+ "title": "Theo - t3.gg (@theo) / X",
+ "logged_in": false,
+ "layout": "xds",
+ "vh": 973,
+ "scroll_y": 0,
+ "flags": {
+  "login_page": false,
+  "account_page": false,
+  "captcha": false,
+  "retry": false,
+  "something_wrong": false,
+  "rate_limit": false,
+  "locked": false,
+  "unusual": false,
+  "no_such_account": false,
+  "no_results": false,
+  "login_links": true
+ },
+ "posts": [
+  {
+   "id": "2109395781845389522",
+   "url": "https://x.com/theo/status/2109395781845389522",
+   "handle": "theo",
+   "name": "Theo - t3.gg",
+   "created_at": null,
+   "text": "A lot of people were mad at me for ts-rust. I can say confidently that they are all wrong.\n\nI explained the real reasons I built it in this vid\n\nhint: it's not just for faster type checks\n\nx.com/theo/status/21…",
+   "is_truncated": false,
+   "lang": null,
+   "counts": {
+    "replies": 41,
+    "reposts": 9,
+    "likes": 385,
+    "bookmarks": null,
+    "views": 47000
+   },
+   "quote": {
+    "id": "2108486588271607991",
+    "url": "https://x.com/theo/status/2108486588271607991",
+    "handle": "theo",
+    "created_at": null,
+    "text": "I really don't get why people are mad at me saying I am \"probably not\" going to maintain the ts-rust rewrite.\n\nI am being honest. I am trying to maintain it, but I also have to run 3 companies and manage a project with half a million users.\n\nWould you prefer I lie?"
+   },
+   "reposted_by": null,
+   "is_pinned": true,
+   "is_reply": false,
+   "is_promoted": false,
+   "media": {
+    "type": "video",
+    "count": 1,
+    "alt": []
+   },
+   "links": [],
+   "position": 0,
+   "in_view": true
+  },
+  {
+   "id": "2109607102188777707",
+   "url": "https://x.com/theo/status/2109607102188777707",
+   "handle": "theo",
+   "name": "Theo - t3.gg",
+   "created_at": null,
+   "text": "Still got people DMing me begging me to try out their vibe coded VS Code extensions 💀",
+   "is_truncated": false,
+   "lang": null,
+   "counts": {
+    "replies": 137,
+    "reposts": 3,
+    "likes": 810,
+    "bookmarks": null,
+    "views": 39000
+   },
+   "quote": null,
+   "reposted_by": null,
+   "is_pinned": false,
+   "is_reply": false,
+   "is_promoted": false,
+   "media": {
+    "type": "none",
+    "count": 0,
+    "alt": []
+   },
+   "links": [],
+   "position": 1,
+   "in_view": false
+  },
+  {
+   "id": "2109593403482948090",
+   "url": "https://x.com/theo/status/2109593403482948090",
+   "handle": "theo",
+   "name": "Theo - t3.gg",
+   "created_at": null,
+   "text": "Thank you Opus 5.5 🫡\n\nKinda wild that I vibe coded a slop port of the LANGUAGE ITSELF and got a 3x reduction in typechecking",
+   "is_truncated": false,
+   "lang": null,
+   "counts": {
+    "replies": 93,
+    "reposts": 10,
+    "likes": 747,
+    "bookmarks": null,
+    "views": 45000
+   },
+   "quote": {
+    "id": "2109576403171872912",
+    "url": "https://x.com/theo/status/2109576403171872912",
+    "handle": "theo",
+    "created_at": null,
+    "text": "Oh man, accidentally told the wrong thread to \"get this merged\" and we shipped ts-rust to T3 Code.\n\nNo issues for 8 hours...guess we're keeping it?"
+   },
+   "reposted_by": null,
+   "is_pinned": false,
+   "is_reply": false,
+   "is_promoted": false,
+   "media": {
+    "type": "image",
+    "count": 1,
+    "alt": []
+   },
+   "links": [],
+   "position": 2,
+   "in_view": false
+  },
+  {
+   "id": "2109576403171872912",
+   "url": "https://x.com/theo/status/2109576403171872912",
+   "handle": "theo",
+   "name": "Theo - t3.gg",
+   "created_at": null,
+   "text": "Oh man, accidentally told the wrong thread to \"get this merged\" and we shipped ts-rust to T3 Code.\n\nNo issues for 8 hours...guess we're keeping it?",
+   "is_truncated": false,
+   "lang": null,
+   "counts": {
+    "replies": 125,
+    "reposts": 10,
+    "likes": 1400,
+    "bookmarks": null,
+    "views": 141000
+   },
+   "quote": {
+    "id": "2109571558335299625",
+    "url": "https://x.com/realhasanshoaib/status/2109571558335299625",
+    "handle": "realhasanshoaib",
+    "created_at": null,
+    "text": "lol @theo \"DO NOT MERGE\" :)"
+   },
+   "reposted_by": null,
+   "is_pinned": false,
+   "is_reply": false,
+   "is_promoted": false,
+   "media": {
+    "type": "none",
+    "count": 0,
+    "alt": []
+   },
+   "links": [],
+   "position": 3,
+   "in_view": false
+  },
+  {
+   "id": "2109560164739350856",
+   "url": "https://x.com/theo/status/2109560164739350856",
+   "handle": "theo",
+   "name": "Theo - t3.gg",
+   "created_at": null,
+   "text": "Latest T3 Code nightly now has an \"update everything\" button.\n\n1 click to:\n- Update your local app\n- Update T3 Code on all environments\n- Update all the providers (claude code, codex etc) across your environments\n- Resume your threads when done",
+   "is_truncated": false,
+   "lang": null,
+   "counts": {
+    "replies": 151,
+    "reposts": 8,
+    "likes": 1300,
+    "bookmarks": null,
+    "views": 27000
+   },
+   "quote": null,
+   "reposted_by": null,
+   "is_pinned": false,
+   "is_reply": false,
+   "is_promoted": false,
+   "media": {
+    "type": "image",
+    "count": 1,
+    "alt": []
+   },
+   "links": [],
+   "position": 4,
+   "in_view": false
+  }
+ ]
+}

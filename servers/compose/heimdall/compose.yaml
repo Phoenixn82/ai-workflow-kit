@@ -1,0 +1,208 @@
+# Heimdall lane: always-on watchdog + notifications (+ optional network-wide ad blocking).
+#   docker compose up -d                       # uptime-kuma + ntfy
+#   docker compose --profile pihole up -d      # also Pi-hole (DNS for the whole house)
+#   --profile beszel / beszel-agent / dozzle / homepage / diun / wazuh-mcp: optional monitoring (end of this file)
+# Copy env.example to .env first.
+#
+# Host networking on Linux: the services listen on the host itself. uptime-kuma and ntfy listen on 127.0.0.1
+# only, so they stay off the network even on a box with no firewall (uptime-kuma's first visitor creates its
+# admin account). Share them with your tailnet, never the LAN:
+#   sudo tailscale serve --bg --http=3001 http://127.0.0.1:3001     # uptime-kuma
+#   sudo tailscale serve --bg --http=8090 http://127.0.0.1:8090     # ntfy
+# Pi-hole's DNS (53) and admin page (8053) listen on every address: the host firewall decides who may reach
+# them (setup.sh: DNS from the LAN, the admin page from the tailnet).
+# macOS (colima) / Windows (Docker Desktop): host networking does not behave the same. Delete every line that
+# says `network_mode: host` (macOS setup.sh does) and uncomment the `ports:` lines instead.
+name: heimdall
+
+services:
+  uptime-kuma:
+    image: louislam/uptime-kuma:2.5.6
+    container_name: uptime-kuma
+    network_mode: host            # UI on 127.0.0.1:3001
+    # ports: ["127.0.0.1:3001:3001"]
+    environment:
+      TZ: ${TZ:-Etc/UTC}
+      UPTIME_KUMA_HOST: 127.0.0.1   # listen address with network_mode: host (drop this line with that one)
+    volumes:
+      - ./uptime-kuma:/app/data
+    mem_limit: 256m
+    cpus: 0.5
+    restart: unless-stopped
+
+  ntfy:
+    image: binwiederhier/ntfy:v2.30.0
+    container_name: ntfy
+    command: serve
+    network_mode: host            # 127.0.0.1:8090
+    # ports: ["127.0.0.1:8090:80"]
+    environment:
+      TZ: ${TZ:-Etc/UTC}
+      NTFY_BASE_URL: ${NTFY_BASE_URL:-http://heimdall:8090}
+      NTFY_LISTEN_HTTP: "127.0.0.1:8090"   # with network_mode: host (drop this line with that one: ntfy then listens on :80)
+      NTFY_CACHE_FILE: /var/cache/ntfy/cache.db
+      NTFY_CACHE_DURATION: 72h
+      # iPhones only get instant pushes through the public ntfy.sh relay (it receives a poll request with
+      # the topic's hash, not the message). Delete this line to keep everything on your tailnet.
+      NTFY_UPSTREAM_BASE_URL: https://ntfy.sh
+    volumes:
+      - ./ntfy/cache:/var/cache/ntfy
+    mem_limit: 128m
+    restart: unless-stopped
+
+  pihole:
+    image: pihole/pihole:2026.09.0
+    profiles: [pihole]
+    container_name: pihole
+    network_mode: host            # DNS :53 (LAN + tailnet), admin page :8053/admin (tailnet only)
+    # ports: ["53:53/tcp", "53:53/udp", "127.0.0.1:8053:8053/tcp"]
+    environment:
+      # A list, not a map, so an empty PIHOLE_PASSWORD leaves the password variable out: Pi-hole then makes a
+      # random one (docker logs pihole | grep password). Passed in empty, Pi-hole would turn the password off.
+      - TZ=${TZ:-Etc/UTC}
+      - ${PIHOLE_PASSWORD:+FTLCONF_webserver_api_password=}${PIHOLE_PASSWORD:-PIHOLE_PASSWORD_EMPTY=1}
+      - FTLCONF_webserver_port=8053
+      - FTLCONF_dns_listeningMode=ALL
+      # Default: the local Unbound resolver (see unbound-pihole.conf). Without Unbound set e.g.
+      # PIHOLE_UPSTREAMS=9.9.9.9;149.112.112.112 in .env.
+      - FTLCONF_dns_upstreams=${PIHOLE_UPSTREAMS:-127.0.0.1#5335}
+    volumes:
+      - ./pihole/etc-pihole:/etc/pihole
+    cap_add:
+      - SYS_NICE
+    mem_limit: 256m
+    cpus: 1
+    restart: unless-stopped
+
+  # ---- Monitoring and security: optional, Linux only, one profile each. What each is for, the tailscale serve
+  # line and how to check it: profiles/heimdall/README.md, section "Monitoring and security (optional)".
+  #   docker compose --profile beszel --profile dozzle --profile homepage --profile diun up -d
+  # Everything below listens on 127.0.0.1 only; share a UI with your tailnet with the `tailscale serve` line
+  # next to it (https needs HTTPS certificates turned on in the Tailscale admin console; or use --http=).
+  # Dozzle, Homepage, Diun and the Beszel agent get the Docker socket. `:ro` only stops the socket file being
+  # replaced: anything holding it can control Docker. That is why they are pinned and reachable from your tailnet only.
+
+  # system history (CPU, memory, disk, temperatures) for every box
+  beszel:
+    image: henrygd/beszel:0.21.1
+    profiles: [beszel]
+    container_name: beszel
+    ports: ["127.0.0.1:8490:8090"]  # sudo tailscale serve --bg --https=8490 http://127.0.0.1:8490
+    environment:
+      TZ: ${TZ:-Etc/UTC}
+      APP_URL: ${BESZEL_APP_URL:-http://127.0.0.1:8490}
+      DISABLE_SSH: "true"         # agents dial in over WebSocket; the hub never opens a connection to them
+      CHECK_UPDATES: "false"      # updates are deliberate (Diun tells you)
+    volumes:
+      - ./beszel:/beszel_data
+    mem_limit: 256m
+    cpus: 0.5
+    restart: unless-stopped
+
+  # heimdall's own Beszel agent; start it after the hub gave you KEY and TOKEN
+  beszel-agent:
+    image: henrygd/beszel-agent:0.21.1
+    profiles: [beszel-agent]
+    container_name: beszel-agent
+    network_mode: host            # sees the host's own network and disks; listens on nothing (DISABLE_SSH)
+    env_file:
+      - path: ./beszel-agent.env  # KEY=... and TOKEN=... from the hub's "Add system" dialog (chmod 600)
+        required: false
+    environment:
+      HUB_URL: http://127.0.0.1:8490
+      DISABLE_SSH: "true"
+      DOCKER_IMAGE_CHECK: "false"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./beszel-agent:/var/lib/beszel-agent
+    mem_limit: 128m
+    cpus: 0.25
+    restart: unless-stopped
+
+  # live container logs in the browser (heimdall, plus Dozzle agents on other boxes)
+  dozzle:
+    image: amir20/dozzle:v11.3.5
+    profiles: [dozzle]
+    container_name: dozzle
+    ports: ["127.0.0.1:8481:8080"]  # sudo tailscale serve --bg --https=8481 http://127.0.0.1:8481
+    environment:
+      TZ: ${TZ:-Etc/UTC}
+      DOZZLE_HOSTNAME: heimdall
+      DOZZLE_NO_ANALYTICS: "true"
+      DOZZLE_RELEASE_CHECK_MODE: manual
+      DOZZLE_IMAGE_CHECK_MODE: "off"      # Diun covers image updates
+      DOZZLE_DISABLE_SETUP_WIZARD: "true"
+      # No login and no actions or shell (both off by default): container logs can hold secrets, so keep the
+      # port tailnet-only. A Dozzle agent on another box (see the README section), one line:
+      # DOZZLE_REMOTE_AGENT: thor:7007|thor
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./dozzle:/data
+    mem_limit: 256m
+    cpus: 0.5
+    restart: unless-stopped
+
+  # one phone-friendly start page with a tile per service
+  homepage:
+    image: ghcr.io/gethomepage/homepage:v2.7.0
+    profiles: [homepage]
+    container_name: homepage
+    network_mode: host            # 127.0.0.1:3010, so its widgets reach the other 127.0.0.1 services
+    environment:
+      TZ: ${TZ:-Etc/UTC}
+      HOSTNAME: 127.0.0.1
+      PORT: "3010"                # sudo tailscale serve --bg --https=3010 http://127.0.0.1:3010
+      HOMEPAGE_ALLOWED_HOSTS: ${HOMEPAGE_ALLOWED_HOSTS:-127.0.0.1:3010}
+    volumes:
+      - ./homepage:/app/config    # first start writes example files here; edit services.yaml
+      - /var/run/docker.sock:/var/run/docker.sock:ro   # the up/down dot on each tile
+    mem_limit: 256m
+    cpus: 0.5
+    restart: unless-stopped
+
+  # weekly "a newer image exists" note to your phone; never updates anything
+  diun:
+    image: crazymax/diun:4.33.1
+    profiles: [diun]
+    container_name: diun
+    command: serve
+    hostname: heimdall
+    environment:
+      TZ: ${TZ:-Etc/UTC}
+      LOG_LEVEL: info
+      DIUN_CONFIG: /etc/diun/diun.yml
+    volumes:
+      - ./diun.yml:/etc/diun/diun.yml:ro
+      - ./diun:/data
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      # Create both files first (chmod 600); Compose refuses to start Diun without them:
+      # diun-telegram.token = the bot token, diun-telegram-chatids.json = [123456789] (the chat to post in)
+      - {type: bind, source: ./diun-telegram.token, target: /run/secrets/telegram.token, read_only: true, bind: {create_host_path: false}}
+      - {type: bind, source: ./diun-telegram-chatids.json, target: /run/secrets/telegram-chatids.json, read_only: true, bind: {create_host_path: false}}
+    mem_limit: 128m
+    cpus: 0.25
+    restart: unless-stopped
+
+  # lets an AI agent read Wazuh alerts; read-only (needs Wazuh, see the README)
+  wazuh-mcp:
+    image: ghcr.io/gensecaihq/wazuh-mcp-server:5.0.0
+    profiles: [wazuh-mcp]
+    container_name: wazuh-mcp
+    network_mode: host            # 127.0.0.1:8770; reaches the Wazuh API (127.0.0.1:55000) and indexer (127.0.0.1:9200)
+    env_file:
+      - path: ./wazuh-mcp.env     # the Wazuh users and MCP_API_KEY (chmod 600), keys listed in env.example
+        required: false
+    environment:
+      MCP_HOST: 127.0.0.1
+      MCP_PORT: "8770"            # sudo tailscale serve --bg --https=8770 http://127.0.0.1:8770
+      ENVIRONMENT: production
+      AUTH_MODE: bearer
+      MCP_API_KEY_SCOPES: "wazuh:read"   # the key can never call a tool that changes something
+      # And those tools are not offered at all: every toolset except "response" (block, isolate, kill, restart)
+      # and "web_search" (sends indicators to an outside search service).
+      WAZUH_TOOLSETS: alerts,agents,vulnerabilities,analysis,compliance,system
+    mem_limit: 256m
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf --max-time 5 http://127.0.0.1:8770/health > /dev/null"]
+      interval: 30s
+    restart: unless-stopped

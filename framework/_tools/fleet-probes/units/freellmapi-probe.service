@@ -1,0 +1,13 @@
+[Unit]
+Description=FreeLLMAPI cloud-leg probe: real completion via thor's router, silent Telegram on state change
+After=network-online.target
+Wants=network-online.target
+ConditionPathExists=%h/.config/freellmapi-probe/key
+
+[Service]
+Type=oneshot
+TimeoutStartSec=360
+# FREELLMAPI_URL (the probe also reads the file itself)
+EnvironmentFile=-%h/.config/ai-workflow-kit/hosts.env
+ExecStart=%h/.local/bin/freellmapi-probe
+Nice=10

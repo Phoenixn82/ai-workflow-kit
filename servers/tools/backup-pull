@@ -1,0 +1,80 @@
+#!/usr/bin/env bash
+# backup-pull: thor copies another box's service data to itself, so that box never opens a connection out.
+# Made for loki, whose one-way firewall refuses every connection it would start (profiles/loki/README.md).
+#
+# The other box gives thor a read-only login: an account whose one key is forced to rrsync in read-only mode,
+# rooted at the folder to back up (on loki, setup.sh loki makes the account backup-pull; the key line in
+# /var/lib/backup-pull/.ssh/authorized_keys, root-owned, is):
+#   command="rrsync -ro /opt/homeserver/media",restrict ssh-ed25519 AAAA... backup-pull@thor
+# It talks to OpenSSH on port 2222 (tailnet only): Tailscale SSH answers port 22 and ignores authorized_keys.
+#
+# Each run lands in its own folder, <root>/<name>/<YYYY-MM-DD>/ (a second run that day: <YYYY-MM-DD>T<HHMMSS>/),
+# hard-linked against the newest earlier copy, so unchanged files take no extra space. A run that fails leaves
+# <folder>.partial, which the next run continues. It never deletes or changes a finished copy: old folders are
+# yours to prune (rm -rf <root>/<name>/<old date>), as on the heimdall push side.
+#
+# Config: /etc/homeserver/backup-pull.conf (shell KEY=value lines)
+#   SOURCE_loki=backup-pull@loki     one line per box: <account>@<host>; that box's forced command picks the folder
+#   PORT=2222                        its OpenSSH port for machine jobs
+#   EXCLUDES="jellyfin/cache"        paths (relative to the pulled folder) left out
+# Key: /etc/homeserver/backup-pull/id_ed25519 (made by setup.sh thor); host keys pinned in .../known_hosts:
+#   sudo sh -c 'ssh-keyscan -p 2222 loki >> /etc/homeserver/backup-pull/known_hosts'   (check the fingerprint once)
+#
+# Usage: backup-pull            pull every SOURCE now (the timer runs this nightly)
+#        backup-pull list       the dated copies per box
+# Restore: from a machine that may reach both boxes (your laptop), see profiles/loki/README.md "Restore".
+# For tests: BACKUP_PULL_CONF, BACKUP_PULL_ROOT, BACKUP_PULL_KEYDIR, BACKUP_PULL_DAY (YYYY-MM-DD) override the defaults.
+set -euo pipefail
+conf=${BACKUP_PULL_CONF:-/etc/homeserver/backup-pull.conf}
+root=${BACKUP_PULL_ROOT:-/srv/backups}
+keydir=${BACKUP_PULL_KEYDIR:-/etc/homeserver/backup-pull}
+day=${BACKUP_PULL_DAY:-$(date +%F)}
+[ -r "$conf" ] || { echo "backup-pull: missing $conf" >&2; exit 1; }
+. "$conf"
+EXCLUDES=${EXCLUDES:-}
+[[ $day =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || { echo "backup-pull: bad day '$day'" >&2; exit 1; }
+sources=$(compgen -v SOURCE_ || true)
+[ -n "$sources" ] || { echo "backup-pull: no SOURCE_<name>=account@host line in $conf" >&2; exit 1; }
+
+if [ "${1:-}" = list ]; then
+  for var in $sources; do
+    name=${var#SOURCE_}
+    echo "$name (${!var}):"
+    find "$root/$name" -mindepth 1 -maxdepth 1 -type d -name '20??-??-??*' -printf '  %f\n' 2>/dev/null | sort || true
+  done
+  exit 0
+fi
+[ $# = 0 ] || { echo "usage: backup-pull [list]" >&2; exit 2; }
+
+ssh_cmd="ssh -p ${PORT:-2222} -i $keydir/id_ed25519 -o BatchMode=yes -o IdentitiesOnly=yes -o UserKnownHostsFile=$keydir/known_hosts -o StrictHostKeyChecking=yes"
+ex=()
+for e in $EXCLUDES; do ex+=(--exclude "$e"); done
+fail=0
+for var in $sources; do
+  name=${var#SOURCE_} src=${!var}
+  [[ $name =~ ^[A-Za-z0-9_-]+$ ]] || { echo "backup-pull: bad name '$name'" >&2; fail=1; continue; }
+  dest=$root/$name
+  mkdir -p "$dest"
+  # the folder for this run: an unfinished one first, else today, else today plus the time
+  cur=$(find "$dest" -mindepth 1 -maxdepth 1 -type d -name '20??-??-??*.partial' -printf '%f\n' | sort | tail -n 1)
+  cur=${cur%.partial}
+  if [ -z "$cur" ]; then
+    cur=$day
+    [ ! -e "$dest/$cur" ] || cur=${day}T$(date +%H%M%S)
+  fi
+  prev=$(find "$dest" -mindepth 1 -maxdepth 1 -type d -name '20??-??-??*' ! -name '*.partial' -printf '%f\n' | sort | tail -n 1)
+  link=()
+  [ -z "$prev" ] || link=(--link-dest "$dest/$prev")
+  # -rlpt, not -a: thor's copy belongs to the user running this; modes and times are kept
+  rc=0
+  # --delete acts only inside this run's own unfinished folder (files gone from the source since a failed try)
+  rsync -rlpt --delete -e "$ssh_cmd" "${ex[@]}" "${link[@]}" "$src:./" "$dest/$cur.partial/" || rc=$?
+  case $rc in
+    0|24) ;;   # 24 = a file vanished while being read: normal for a live folder
+    *) echo "backup-pull: $name failed (rsync exit $rc); $dest/$cur.partial is kept and the next run continues it" >&2
+       fail=1; continue ;;
+  esac
+  mv -- "$dest/$cur.partial" "$dest/$cur"
+  echo "backup-pull: $name ok -> $dest/$cur"
+done
+exit "$fail"

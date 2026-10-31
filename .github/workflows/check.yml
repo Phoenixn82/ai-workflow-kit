@@ -1,0 +1,118 @@
+# Kit checks: manifest, profiles, docs, installer, offline self-tests of the bundled tools, and a secret scan.
+# Everything here is offline and needs no secrets.
+# The jobs run in parallel and each is capped at 5 minutes (the plan's budget for the whole check): an installer
+# test that outgrows it needs a faster CI mode, not a bigger cap.
+name: check
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+  pull-requests: read   # gitleaks-action lists a pull request's commits
+
+concurrency:
+  group: check-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - name: Manifest
+        run: |
+          python3 install/test_manifest.py
+          python3 install/test_manifest.py --self-test
+      - name: Profiles
+        run: |
+          python3 profiles/test_profiles.py
+          python3 profiles/test_profiles.py --self-test
+      - name: Uninstall guide matches the manifest, profiles and server scripts
+        run: |
+          python3 install/uninstall_doc.py
+          python3 install/uninstall_doc.py --self-test
+      - name: Docs and lanes
+        run: |
+          python3 tools/check_docs.py
+          python3 tools/check_docs.py --self-test
+          python3 tools/check_lanes_doc.py
+      - name: Sync staging rules (fake files only)
+        run: python3 tools/test_sync_kit.py
+      - name: Offline self-test runner reporting and fixtures
+        run: python3 tools/test_selftests.py
+      - name: Documented Telegram setup replays against a fake Telegram
+        run: python3 tools/test_telegram_setup.py
+      - name: Windows server setup rules (pwsh, mocked ACLs)
+        run: pwsh -NoProfile -File servers/windows/test_setup.ps1
+      - name: YAML dependency for the Hermes installer self-test
+        run: python3 -m pip install pyyaml==6.0.3
+      - name: Bundled tools, offline self-tests with an empty environment
+        # Left out on purpose: live systemd scopes (agents-slice), optional sqlite-vec (vault_rag.py,
+        # vault-recall) and x-scroll's larger offline suite. The full runner reports missing prerequisites
+        # as SKIP; unit verification and installed-file fixtures work without a running user manager.
+        # vault-rag's prompt hook needs only jq, which the runner image has. Run everything locally:
+        # WITH_BUS=1 KIT_HOME=$PWD tools/run-selftests.sh framework
+        run: |
+          KIT_HOME="$PWD" bash tools/run-selftests.sh framework \
+            harness/bin/cx harness/bin/route harness/bin/thor-up \
+            harness/hooks/dispatch/dispatch.sh harness/hooks/dispatch/run.py harness/hooks/hook_event.py \
+            harness/hooks/odin-model-guard.py harness/hooks/route-guard.py harness/hooks/secret-firewall/block-secrets.py \
+            _tools/hermes-kit/install.sh _tools/hermes-kit/agent-hooks/route-guard.py _tools/hermes-loki/loki-llm-gate _tools/helper-wall/helper-wall _tools/thor-wake-proxy/thor-wake-proxy \
+            _tools/fleet-probes/disk-probe _tools/fleet-probes/freellmapi-probe \
+            _tools/fleet-wake/fleet-wake _tools/fleet-wake/thor/ollama-embed-check _tools/fleet-wake/thor/thor-sleep \
+            _tools/harness-lint/harness_lint.py _tools/host-heat/host-heat \
+            _tools/lane-intel/apply_lanes.py _tools/lane-intel/propose.py _tools/lane-intel/route.py \
+            _tools/lane-intel/run.sh _tools/lane-intel/slopalytics.py _tools/lane-intel/stance.py \
+            _tools/lane-intel/summarize.py _tools/lane-intel/theo_watch.py _tools/lane-intel/whisper_thor.py \
+            _tools/lane-intel/x_watch.py _tools/lane-intel/install.sh _tools/x-scroll/install.sh \
+            _tools/retention/install.sh _tools/retention/repatch.py _tools/retention/retain.py \
+            _tools/secret-firewall-corpus/run.py \
+            _tools/telegram/tg _tools/telegram/tg-admin \
+            _tools/transcript-prune/prune_codex.py _tools/vault-lint/vault_lint.py \
+            _tools/vault-rag/hook-user-prompt.sh _tools/vault-rag/install.sh _tools/vault-rag/reindex.sh \
+            _tools/weekly-review/collect.py _tools/weekly-review/install.sh _tools/weekly-review/run.sh
+      - name: Server tool self-tests (fake hosts and files only)
+        run: |
+          servers/tools/fleet-scan/fleet-scan --self-test
+          python3 servers/tools/wazuh-tg/wazuh-tg --self-test
+          servers/tools/luks-unlock/luks-unlock-setup --self-test
+          servers/tools/ssh-keylog/ssh-keylog --self-test
+          bash servers/tools/ac-power-profile/test.sh
+          sudo apt-get update -qq && sudo apt-get install -y -qq restic   # media-backup test needs restic
+          bash servers/tools/media-backup/test.sh
+
+  install:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - name: Installer test (install/test_install.sh)
+        run: |
+          if [ -f install/test_install.sh ]; then
+            bash install/test_install.sh
+          else
+            echo "::warning file=install/test_install.sh::install/test_install.sh is not in this commit yet; installer test skipped"
+          fi
+
+  macos-setup:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - name: macOS server setup in containers (servers/macos/test_setup.py)
+        run: python3 servers/macos/test_setup.py
+
+  gitleaks:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3.0.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_ENABLE_COMMENTS: "false"

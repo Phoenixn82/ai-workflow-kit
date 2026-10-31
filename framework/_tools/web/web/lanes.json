@@ -1,0 +1,16 @@
+{"read": {"rungs": ["scrapling-get", "scrapling-fetch", "scrapling-stealth", "zendriver"]},
+ "act": {"max_browsers": 4, "max_launch_temp_c": 90, "primary": "agent-browser-cli", "backup": "firefox-devtools-zen",
+         "max_anon_browsers": 12,
+         "vpn_only_domains": ["facebook.com", "fb.com", "fb.me", "messenger.com"],
+         "identity_domains": [
+             "anthropic.com", "bluesky.social", "bsky.app", "chatgpt.com", "claude.ai", "cloudflare.com", "figma.com", "github.com",
+             "github.dev", "gmail.com", "google.com", "googleapis.com", "googleusercontent.com", "gstatic.com", "huggingface.co", "instagram.com",
+             "linear.app", "linkedin.com", "live.com", "microsoft.com", "notion.so", "openai.com", "openrouter.ai", "outlook.com",
+             "reddit.com", "supabase.com", "t.co", "tailscale.com", "threads.net", "twitter.com", "vercel.com", "x.com",
+             "youtu.be", "youtube.com"],
+         "identity_launch": {"setup": "web-owned-chromium+agent-browser-cdp", "executable": "/usr/bin/chromium",
+                             "args": ["--ozone-platform=x11", "--no-first-run", "--no-default-browser-check",
+                                      "--password-store=basic", "--disable-blink-features=AutomationControlled",
+                                      "--disable-gpu", "--disable-background-timer-throttling",
+                                      "--disable-backgrounding-occluded-windows", "--disable-renderer-backgrounding"]}},
+ "desk": {"primary": "computer-use-linux", "backup": "hypruse", "status": "chosen by a desk bake-off"}}

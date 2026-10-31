@@ -1,0 +1,12 @@
+# Doing nothing boots the internal disk: a stick left in (or a reboot) never starts a second install.
+# Press "a" (or pick the second line) to run the hands-off install.
+set timeout=10
+set default=0
+menuentry 'Boot the internal disk (default)' {
+    exit
+}
+menuentry --hotkey=a 'Auto-install @HOSTNAME@ (WIPES the internal disk)' {
+    set background_color=black
+    linux    /install.amd/vmlinuz auto=true priority=high preseed/file=/cdrom/preseed.cfg locale=en_US.UTF-8 keymap=us hostname=@HOSTNAME@ domain=lan --- quiet
+    initrd   /install.amd/initrd.gz
+}

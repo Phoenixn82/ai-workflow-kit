@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd "${AI_PROJECTS_ROOT:-$HOME/AI_Projects}"
+if command -v systemd-run >/dev/null && systemctl --user show agents.slice --property=LoadState --value 2>/dev/null | grep -qx loaded; then
+  exec systemd-run --user --scope --slice=agents.slice --unit="hermes-$$" --collect --quiet -- hermes "$@"
+fi
+exec hermes "$@"

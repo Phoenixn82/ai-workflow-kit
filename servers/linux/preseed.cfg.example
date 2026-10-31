@@ -1,0 +1,115 @@
+#### Hands-off Debian 13 (trixie) install for ONE specific laptop. It WIPES that laptop's internal disk.
+####
+#### Nothing starts by itself: the stick's boot menu (grub-entry.cfg.example) boots the internal disk unless you
+#### press "a". After that, two guards power it off WITHOUT touching any disk unless (1) the machine's model
+#### name matches @MODEL@ and (2) exactly ONE internal (non-USB) disk of 100 GB - 4 TB is present. So a stick
+#### left in, or plugged into the wrong machine, does not wipe anything on its own.
+####
+#### Fill in the placeholders (keep the @ signs out of the result):
+####   @HOSTNAME@  lane name, e.g. heimdall / loki / thor
+####   @MODEL@     part of the model name:  cat /sys/class/dmi/id/product_name   (e.g. "latitude 7480")
+####   @USERNAME@  your login name
+####   @PWHASH@    console password hash:   mkpasswd -m sha-512     (Debian: apt install whois)
+####   @PUBKEY@    your SSH public key:     cat ~/.ssh/id_ed25519.pub
+#### Change time/zone below from Etc/UTC to yours.
+####
+#### Build the USB stick (on any Linux box; xorriso from your package manager):
+####   1. Download the Debian 13 amd64 netinst ISO and its SHA256SUMS(.sign) from debian.org; check the sum.
+####   2. Extract the boot menu:   xorriso -osirrox on -indev debian-13.*-netinst.iso -extract /boot/grub/grub.cfg grub.cfg
+####      chmod u+w grub.cfg, then paste the contents of grub-entry.cfg.example ABOVE the first `menuentry`.
+####   3. Build:  xorriso -indev debian-13.*-netinst.iso -outdev auto.iso \
+####                -map preseed.cfg /preseed.cfg -map grub.cfg /boot/grub/grub.cfg -boot_image any replay
+####   4. Write it:  sudo dd if=auto.iso of=/dev/sdX bs=4M conv=fsync status=progress
+####      (/dev/sdX = the USB stick, check with lsblk; dd to the wrong disk destroys it)
+####   5. Optional but wise: test in a VM first (qemu with -smbios "type=1,product=<your model>" and a
+####      blank virtual disk): press "a"; the install should run with no questions and power off.
+#### Boot the laptop from the stick (UEFI) and press "a" at the menu (waiting 10 s boots the internal disk
+#### instead). About 10-20 minutes later it powers off.
+#### Remove the stick, power on, then: ssh @USERNAME@@@HOSTNAME@.local  and run servers/linux/setup.sh.
+
+# Guard 1: only on the intended model. Anything else powers off before disks are touched.
+d-i preseed/early_command string \
+    grep -qi "@MODEL@" /sys/class/dmi/id/product_name || { echo "NOT THE INTENDED MACHINE - refusing to install"; sleep 30; poweroff -f; }
+
+d-i debian-installer/locale string en_US.UTF-8
+d-i keyboard-configuration/xkb-keymap select us
+
+# Network: wired if it has link, otherwise the installer asks for Wi-Fi once.
+# The boot entry must use priority=high, NOT critical: at critical the Wi-Fi passphrase question is
+# skipped and the install dead-ends on "passphrase too long or too short".
+d-i netcfg/choose_interface select auto
+d-i netcfg/get_hostname string @HOSTNAME@
+d-i netcfg/get_domain string lan
+d-i netcfg/hostname string @HOSTNAME@
+d-i hw-detect/load_firmware boolean true
+
+d-i mirror/country string manual
+d-i mirror/http/hostname string deb.debian.org
+d-i mirror/http/directory string /debian
+d-i mirror/http/proxy string
+
+# Account: root login off; your user gets sudo.
+d-i passwd/root-login boolean false
+d-i passwd/user-fullname string @USERNAME@
+d-i passwd/username string @USERNAME@
+d-i passwd/user-password-crypted password @PWHASH@
+
+d-i clock-setup/utc boolean true
+# Change to your zone, e.g. Europe/Berlin
+d-i time/zone string Etc/UTC
+d-i clock-setup/ntp boolean true
+
+# Guard 2: exactly one internal disk (NVMe or SATA, never USB/removable), 100 GB - 4 TB; install to it.
+# "No disk found" on Dell/HP usually means BIOS SATA Operation = RAID (Intel RST): set it to AHCI.
+d-i partman/early_command string \
+    t=""; n=0; s=0; \
+    for d in /sys/block/nvme*n1 /sys/block/sd?; do \
+      [ -e "$d" ] || continue; \
+      case "$(readlink -f $d/device)" in *usb*) continue;; esac; \
+      [ "$(cat $d/removable)" = 0 ] || continue; \
+      t=/dev/${d##*/}; s=$(cat $d/size); n=$((n+1)); \
+    done; \
+    if [ "$n" -ne 1 ]; then echo "need exactly ONE internal disk, found $n - refusing"; sleep 30; poweroff -f; fi; \
+    if [ "$s" -lt 195312500 ] || [ "$s" -gt 7812500000 ]; then echo "$t is $s sectors, outside 100 GB - 4 TB - refusing"; sleep 30; poweroff -f; fi; \
+    debconf-set partman-auto/disk "$t"
+d-i partman-auto/method string regular
+d-i partman-lvm/device_remove_lvm boolean true
+d-i partman-md/device_remove_md boolean true
+d-i partman-auto/choose_recipe select atomic
+d-i partman-partitioning/confirm_write_new_label boolean true
+d-i partman/choose_partition select finish
+d-i partman/confirm boolean true
+d-i partman/confirm_nooverwrite boolean true
+# No disk encryption: an unattended server must be able to reboot by itself (see common.md).
+
+d-i apt-setup/non-free-firmware boolean true
+d-i apt-setup/contrib boolean false
+d-i apt-setup/non-free boolean false
+d-i apt-setup/services-select multiselect security, updates
+tasksel tasksel/first multiselect standard, ssh-server
+# Wi-Fi/GPU firmware + CPU microcode (use amd64-microcode instead on AMD)
+d-i pkgsel/include string sudo curl ca-certificates avahi-daemon libnss-mdns firmware-iwlwifi firmware-misc-nonfree intel-microcode unattended-upgrades
+d-i pkgsel/upgrade select full-upgrade
+popularity-contest popularity-contest/participate boolean false
+
+d-i grub-installer/only_debian boolean true
+d-i grub-installer/bootdev string default
+# Some firmware (seen on HP) ignores or reorders the Debian boot entry and boots the USB stick forever.
+# Also installing to the removable fallback path (EFI/BOOT/BOOTX64.EFI) makes the disk boot regardless.
+d-i grub-installer/force-efi-extra-removable boolean true
+
+# Key-only SSH, a laptop that never sleeps with the lid closed.
+d-i preseed/late_command string \
+    mkdir -p /target/home/@USERNAME@/.ssh; \
+    echo "@PUBKEY@" > /target/home/@USERNAME@/.ssh/authorized_keys; \
+    in-target chown -R @USERNAME@:@USERNAME@ /home/@USERNAME@/.ssh; \
+    chmod 700 /target/home/@USERNAME@/.ssh; chmod 600 /target/home/@USERNAME@/.ssh/authorized_keys; \
+    printf "PasswordAuthentication no\nKbdInteractiveAuthentication no\nPermitRootLogin no\n" > /target/etc/ssh/sshd_config.d/10-keys-only.conf; \
+    mkdir -p /target/etc/systemd/logind.conf.d; \
+    printf "[Login]\nHandleLidSwitch=ignore\nHandleLidSwitchExternalPower=ignore\nHandleLidSwitchDocked=ignore\n" > /target/etc/systemd/logind.conf.d/10-server.conf; \
+    in-target systemctl mask sleep.target suspend.target hibernate.target hybrid-sleep.target; \
+    printf "@HOSTNAME@ - ssh @USERNAME@@@HOSTNAME@.local\n\n" >> /target/etc/issue
+
+# Power off when done, so you can tell it finished. (A stick left in is harmless: its menu defaults to the disk.)
+d-i finish-install/reboot_in_progress note
+d-i debian-installer/exit/poweroff boolean true

@@ -1,0 +1,7 @@
+# Use from any unit:  [Unit] OnFailure=alert@%n.service
+[Unit]
+Description=Send an alert that %i failed
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/alert "%H: %i failed. Check: journalctl -u %i"

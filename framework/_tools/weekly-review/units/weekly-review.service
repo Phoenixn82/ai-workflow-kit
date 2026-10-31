@@ -1,0 +1,15 @@
+[Unit]
+Description=weekly-review: weekly workflow review (collect, claude review, claude verify, commit, one Telegram line)
+Documentation=file://%h/AI_Projects/_tools/weekly-review/README.md
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+Slice=agents.slice
+Nice=10
+TimeoutStartSec=3h
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+Environment=CLAUDE_SPAWN=1
+# odin is a laptop that may idle-suspend: hold a sleep inhibitor for the length of the run
+ExecStart=/bin/sh -c 'if /usr/bin/systemd-inhibit --what=idle:sleep --who=weekly-review --why=probe true 2>/dev/null; then exec /usr/bin/systemd-inhibit --what=idle:sleep --who=weekly-review --why=weekly-review %h/AI_Projects/_tools/weekly-review/run.sh; else exec %h/AI_Projects/_tools/weekly-review/run.sh; fi'

@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# vault-recall "<query>" [-k N] [--json] [--fts-only]: query the vault-rag index (never wakes thor). --self-test runs the offline suite.
+# Python with sqlite-vec: $VAULT_RAG_PY, else the .venv that install.sh makes beside vault_rag.py, else `uv run`.
+D=$(dirname "$(readlink -f "$0")")
+if [ -n "${VAULT_RAG_PY:-}" ]; then PY=("$VAULT_RAG_PY")
+elif [ -x "$D/.venv/bin/python" ]; then PY=("$D/.venv/bin/python")
+elif [ "${1:-}" = --self-test ]; then PY=(python3)  # offline: report missing sqlite-vec instead of downloading it
+elif command -v uv >/dev/null; then PY=(uv run --quiet --no-project --with sqlite-vec==0.1.9 python)
+else echo "vault-recall: no Python with sqlite-vec: run $D/install.sh (needs uv) or set VAULT_RAG_PY" >&2; exit 1; fi
+[ "${1:-}" = --self-test ] && exec "${PY[@]}" "$D/vault_rag.py" --self-test
+exec "${PY[@]}" "$D/vault_rag.py" query "$@"

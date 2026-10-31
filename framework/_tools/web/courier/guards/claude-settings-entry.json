@@ -1,0 +1,10 @@
+{
+  "matcher": "Bash|Read|Edit|MultiEdit|Write|NotebookEdit|Grep|Glob",
+  "hooks": [
+    {
+      "type": "command",
+      "command": "bash __HOOK__",
+      "timeout": 5
+    }
+  ]
+}

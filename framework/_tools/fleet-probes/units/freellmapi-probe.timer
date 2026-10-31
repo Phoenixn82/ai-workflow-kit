@@ -1,0 +1,10 @@
+[Unit]
+Description=Run the FreeLLMAPI cloud-leg probe every 30 minutes
+
+[Timer]
+OnBootSec=5min
+OnCalendar=*:07/30
+AccuracySec=1min
+
+[Install]
+WantedBy=timers.target

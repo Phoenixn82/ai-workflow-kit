@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# ssh-keylog-report: what each logged key ran, grouped by program, per host.
+#   ssh-keylog-report [--since -7d] [host ...]     no host: this machine; "local" also means this machine
+# Reads the journal (tag ssh-keylog) on each host, as you or with sudo -n, so your user needs to be in the
+# systemd-journal (or adm) group there, or have passwordless sudo. Output per host: count, key label, client, program.
+set -euo pipefail
+since=-7d
+if [ "${1:-}" = --since ]; then since=${2:?--since needs a value, e.g. -7d or 2026-01-01}; shift 2; fi
+[[ $since =~ ^[-+A-Za-z0-9:\ ]+$ ]] || { echo "ssh-keylog-report: bad --since '$since'" >&2; exit 2; }
+[ $# -gt 0 ] || set -- local
+q="journalctl -q -t ssh-keylog --since '$since' --no-pager -o cat"
+for h in "$@"; do
+  echo "=== $h"
+  if [ "$h" = local ]; then
+    { sh -c "$q" 2>/dev/null || sudo -n sh -c "$q" 2>/dev/null || true; }
+  else
+    ssh -n -o BatchMode=yes -o ConnectTimeout=8 "$h" "$q 2>/dev/null || sudo -n $q" 2>/dev/null || true
+  fi |
+    sed -E 's/^key=([^ ]+) from=([^ ]*) cmd=(.*)$/\1\t\2\t\3/' |
+    awk -F'\t' 'NF==3 {split($3,w," "); p=w[1]; if (p ~ /^(cd|env|export|sudo|bash|sh|nice|timeout|exec)$/ && w[2]!="") p=p" "w[2]; print $1"\t"$2"\t"p}' |
+    sort | uniq -c | sort -rn | head -40
+done

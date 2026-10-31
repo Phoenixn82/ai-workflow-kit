@@ -1,0 +1,7 @@
+[Unit]
+Description=CPU/memory ceiling for AI agent sessions (claude, codex, their hooks and subprocesses)
+Documentation=file://$HOME/AI_Projects/_system/second-brain/Projects/workflow/NOTES.md
+
+[Slice]
+CPUQuota=1200%
+MemoryHigh=24G

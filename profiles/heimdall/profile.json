@@ -1,0 +1,231 @@
+{
+  "name": "heimdall",
+  "role": "the always-on watchman: scheduled jobs, uptime checks, alerts, wake-ups, backups, and the box your projects get deployed to",
+  "for": "anyone who wants hard rules for server work and an out-of-the-box way to put current or future projects on a server",
+  "addon": false,
+  "os": [
+    "debian",
+    "macos"
+  ],
+  "tools": [
+    "git",
+    "python3",
+    "jq",
+    "tailscale",
+    "hosts-env",
+    "docker",
+    "restic",
+    "uptime-kuma",
+    "ntfy",
+    "pihole",
+    "unbound",
+    "server-lane-heimdall",
+    "fleet-wake",
+    "freellmapi-probe",
+    "hermes",
+    "thor-wake-proxy",
+    "ssh-keylog",
+    "clamav",
+    "beszel",
+    "dozzle",
+    "homepage",
+    "diun",
+    "wazuh",
+    "wazuh-mcp",
+    "wazuh-tg",
+    "fleet-scan"
+  ],
+  "services": [
+    {
+      "name": "uptime-kuma",
+      "kind": "compose",
+      "tool": "uptime-kuma",
+      "compose": "servers/compose/heimdall/compose.yaml",
+      "service": "uptime-kuma",
+      "compose_profiles": [],
+      "env_example": "servers/compose/heimdall/env.example",
+      "health": "curl -fsS -o /dev/null http://127.0.0.1:3001",
+      "optional": false,
+      "linux_only": false,
+      "project_dir": {
+        "linux": "/opt/homeserver/heimdall",
+        "macos": "~/homeserver/heimdall"
+      }
+    },
+    {
+      "name": "ntfy",
+      "kind": "compose",
+      "tool": "ntfy",
+      "compose": "servers/compose/heimdall/compose.yaml",
+      "service": "ntfy",
+      "compose_profiles": [],
+      "env_example": "servers/compose/heimdall/env.example",
+      "health": "curl -fsS http://127.0.0.1:8090/v1/health",
+      "optional": true,
+      "linux_only": false,
+      "project_dir": {
+        "linux": "/opt/homeserver/heimdall",
+        "macos": "~/homeserver/heimdall"
+      }
+    },
+    {
+      "name": "pihole",
+      "kind": "compose",
+      "tool": "pihole",
+      "compose": "servers/compose/heimdall/compose.yaml",
+      "service": "pihole",
+      "compose_profiles": [
+        "pihole"
+      ],
+      "env_example": "servers/compose/heimdall/env.example",
+      "health": "curl -fsS -o /dev/null http://127.0.0.1:8053/admin/",
+      "optional": true,
+      "linux_only": false,
+      "project_dir": {
+        "linux": "/opt/homeserver/heimdall",
+        "macos": "~/homeserver/heimdall"
+      }
+    },
+    {
+      "name": "ollama-embed",
+      "kind": "compose",
+      "tool": "docker",
+      "compose": "framework/_tools/vault-rag/heimdall/compose.yaml",
+      "service": "ollama",
+      "compose_profiles": [],
+      "env_file": "~/.config/ai-workflow-kit/hosts.env",
+      "health": "curl -fsS \"http://${HEIMDALL_HOST:?set HEIMDALL_HOST in hosts.env}:11434/api/version\"",
+      "optional": true,
+      "linux_only": true,
+      "project_dir": {
+        "linux": "~/services/ollama-embed"
+      }
+    },
+    {
+      "name": "beszel",
+      "kind": "compose",
+      "tool": "beszel",
+      "compose": "servers/compose/heimdall/compose.yaml",
+      "service": "beszel",
+      "compose_profiles": [
+        "beszel"
+      ],
+      "env_example": "servers/compose/heimdall/env.example",
+      "health": "curl -fsS -o /dev/null http://127.0.0.1:8490/api/health",
+      "optional": true,
+      "linux_only": true,
+      "project_dir": {
+        "linux": "/opt/homeserver/heimdall"
+      }
+    },
+    {
+      "name": "dozzle",
+      "kind": "compose",
+      "tool": "dozzle",
+      "compose": "servers/compose/heimdall/compose.yaml",
+      "service": "dozzle",
+      "compose_profiles": [
+        "dozzle"
+      ],
+      "env_example": "servers/compose/heimdall/env.example",
+      "health": "curl -fsS -o /dev/null http://127.0.0.1:8481/healthcheck",
+      "optional": true,
+      "linux_only": true,
+      "project_dir": {
+        "linux": "/opt/homeserver/heimdall"
+      }
+    },
+    {
+      "name": "homepage",
+      "kind": "compose",
+      "tool": "homepage",
+      "compose": "servers/compose/heimdall/compose.yaml",
+      "service": "homepage",
+      "compose_profiles": [
+        "homepage"
+      ],
+      "env_example": "servers/compose/heimdall/env.example",
+      "health": "curl -fsS -o /dev/null http://127.0.0.1:3010/api/healthcheck",
+      "optional": true,
+      "linux_only": true,
+      "project_dir": {
+        "linux": "/opt/homeserver/heimdall"
+      }
+    },
+    {
+      "name": "diun",
+      "kind": "compose",
+      "tool": "diun",
+      "compose": "servers/compose/heimdall/compose.yaml",
+      "service": "diun",
+      "compose_profiles": [
+        "diun"
+      ],
+      "env_example": "servers/compose/heimdall/env.example",
+      "health": "docker inspect -f '{{.State.Running}}' diun | grep -qx true",
+      "optional": true,
+      "linux_only": true,
+      "project_dir": {
+        "linux": "/opt/homeserver/heimdall"
+      }
+    }
+  ],
+  "automations": [
+    {
+      "name": "fleet-wake",
+      "tool": "fleet-wake",
+      "unit": "framework/_tools/fleet-wake/fleet-wake.timer",
+      "files": [
+        "framework/_tools/fleet-wake/fleet-wake.service",
+        "framework/_tools/fleet-wake/fleet-wake.timer"
+      ],
+      "scope": "user",
+      "enable": false,
+      "linux_only": true,
+      "kill_switch": "touch ~/.local/state/fleet-wake/HALT, or systemctl --user disable --now fleet-wake.timer"
+    },
+    {
+      "name": "freellmapi-probe",
+      "tool": "freellmapi-probe",
+      "unit": "framework/_tools/fleet-probes/units/freellmapi-probe.timer",
+      "files": [
+        "framework/_tools/fleet-probes/units/freellmapi-probe.service",
+        "framework/_tools/fleet-probes/units/freellmapi-probe.timer"
+      ],
+      "scope": "user",
+      "enable": false,
+      "kill_switch": "touch ~/.local/state/freellmapi-probe/HALT, or systemctl --user disable --now freellmapi-probe.timer",
+      "linux_only": true
+    },
+    {
+      "name": "fleet-scan",
+      "tool": "fleet-scan",
+      "unit": "servers/tools/fleet-scan/fleet-scan.timer",
+      "files": [
+        "servers/tools/fleet-scan/fleet-scan.service",
+        "servers/tools/fleet-scan/fleet-scan.timer"
+      ],
+      "scope": "system",
+      "enable": false,
+      "linux_only": true,
+      "kill_switch": "sudo touch /var/lib/fleet-scan/HALT, or sudo systemctl disable --now fleet-scan.timer"
+    },
+    {
+      "name": "wazuh-tg",
+      "tool": "wazuh-tg",
+      "unit": "servers/tools/wazuh-tg/wazuh-tg.service",
+      "files": [
+        "servers/tools/wazuh-tg/wazuh-tg.service"
+      ],
+      "scope": "system",
+      "enable": false,
+      "linux_only": true,
+      "kill_switch": "sudo touch /var/lib/wazuh-tg/HALT, or sudo systemctl disable --now wazuh-tg"
+    }
+  ],
+  "rules": [],
+  "requires_hardware": {
+    "ram_gb": 4,
+    "always_on": true
+  }
+}

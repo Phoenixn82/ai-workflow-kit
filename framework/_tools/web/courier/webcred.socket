@@ -1,0 +1,18 @@
+[Unit]
+Description=webcred credential courier socket (spec 3.5)
+
+[Socket]
+ListenStream=/run/webcred/sock
+SocketUser=webcred
+SocketGroup=you
+SocketMode=0660
+DirectoryMode=0755
+Accept=no
+# sync-google's import dir: setgid group you, so the CSV webcred writes there is readable by the identity browser
+# (you) without webcred joining that group. Made here (root, unsandboxed, before webcred.service can start)
+# because the service's sandbox binds it (ReadWritePaths) and systemd sets that up even for '+' commands.
+# '-': if this fails, only sync-google is off (import-dir); the socket and the rest of the courier still work.
+ExecStartPost=-/usr/bin/install -d -m 2750 -o webcred -g you /run/webcred/import
+
+[Install]
+WantedBy=sockets.target

@@ -1,0 +1,10 @@
+[Unit]
+Description=Nightly backup-push
+
+[Timer]
+OnCalendar=*-*-* 04:15
+RandomizedDelaySec=5m
+Persistent=true
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,57 @@
+#!/usr/bin/env bash
+# thor-up: make sure thor is awake (it suspends when idle; audit 2026-10-12, the user 2.4), then return 0.
+# Call it before anything that needs thor: restic, the handoff distiller, vault-rag, lane calls.
+# Config: THOR_HOST (probed on :22) and THOR_MAC (Wake-on-LAN), optional LAN_BROADCAST, from the environment or
+# ~/.config/ai-workflow-kit/hosts.env (KIT_HOSTS_ENV overrides the path). Also asks heimdall's fleet-wake over the
+# ssh alias `heimdall` when that exists.  thor-up --dry-run: print the plan.  thor-up --self-test: offline checks.
+H=${KIT_HOSTS_ENV:-$HOME/.config/ai-workflow-kit/hosts.env}
+cfg() { local v=${!1:-}; [ -n "$v" ] || v=$(sed -n "s/^$1=//p" "$H" 2>/dev/null | tail -n1); v=${v%[\"\']}; v=${v#[\"\']}; printf %s "$v"; }
+if [ "${1:-}" = --self-test ]; then
+  t=$(mktemp -d); trap 'rm -rf "$t"' EXIT; s=$(readlink -f "$0")
+  fail() { echo "thor-up self-test: FAIL $*"; exit 1; }
+  out=$(env -u THOR_HOST -u THOR_MAC KIT_HOSTS_ENV="$t/none" "$s" 2>&1); rc=$?
+  [ $rc = 2 ] && [[ $out == *"set THOR_HOST in $t/none"* ]] || fail "unset: rc $rc: $out"
+  printf '# c\nTHOR_HOST=192.0.2.7\nTHOR_MAC="aa:bb:cc:dd:ee:ff"\nLAN_BROADCAST=\047192.0.2.255\047\n' >"$t/h"
+  out=$(env -u THOR_HOST -u THOR_MAC -u LAN_BROADCAST KIT_HOSTS_ENV="$t/h" "$s" --dry-run)
+  [[ $out == *"probe 192.0.2.7:22"*"aa:bb:cc:dd:ee:ff to 192.0.2.255 255.255.255.255"* ]] || fail "file: $out"
+  out=$(THOR_HOST=192.0.2.9 KIT_HOSTS_ENV="$t/h" "$s" --dry-run)
+  [[ $out == *"probe 192.0.2.9:22"* ]] || fail "env must win: $out"
+  printf 'THOR_HOST=192.0.2.7\n' >"$t/nomac"
+  out=$(env -u THOR_MAC KIT_HOSTS_ENV="$t/nomac" "$s" --dry-run 2>&1); rc=$?
+  [ $rc = 2 ] && [[ $out == *"set THOR_MAC"* ]] || fail "no mac: rc $rc: $out"
+  for bad in '127.0.0.1/1; printf KIT_HOST_EXECUTED; #' 'thor;printf KIT_HOST_EXECUTED' '$(printf KIT_HOST_EXECUTED)' \
+             '`printf KIT_HOST_EXECUTED`' "th'or" 'th"or' $'thor\nprintf KIT_HOST_EXECUTED' 'thor 22' '-thor' 'a/b' ''; do
+    out=$(env -u THOR_MAC THOR_HOST="$bad" KIT_HOSTS_ENV="$t/none" "$s" 2>&1); rc=$?
+    [ $rc = 2 ] && [[ $out == *"THOR_HOST"* && $out != *KIT_HOST_EXECUTED* ]] || fail "bad host $(printf %q "$bad"): rc $rc: $out"
+  done
+  for good in thor thor.tail1234.ts.net. 192.0.2.7 2001:db8::7 ::ffff:192.0.2.7 fe80::1%eth0; do
+    out=$(THOR_HOST="$good" KIT_HOSTS_ENV="$t/h" "$s" --dry-run 2>&1) && [[ $out == *"probe $good:22"* ]] || fail "good host $good: $out"
+  done
+  echo "thor-up self-test: ok"; exit 0
+fi
+THOR=$(cfg THOR_HOST); MAC=$(cfg THOR_MAC); BC=$(cfg LAN_BROADCAST)
+[ -n "$THOR" ] || { echo "thor-up: set THOR_HOST in $H (thor's address, probed on port 22)" >&2; exit 2; }
+# THOR_HOST is data: a DNS name, IPv4 or IPv6 address (optional %zone), checked here and handed to the probe as an
+# argument, never spliced into shell source (kit S7).
+dns_re='^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)*\.?$'
+ip6_re='^[0-9A-Fa-f.]*:[0-9A-Fa-f:.]*(%[A-Za-z0-9_.-]+)?$'
+[ ${#THOR} -le 253 ] && { [[ $THOR =~ $dns_re ]] || [[ $THOR =~ $ip6_re ]]; } ||
+  { echo "thor-up: THOR_HOST (environment or $H) is not a hostname or IP address" >&2; exit 2; }
+up() { timeout 3 bash -c 'echo > "/dev/tcp/$1/22"' thor-up "$THOR" 2>/dev/null; }
+[ "${1:-}" = --dry-run ] || { up && exit 0; }
+[[ $MAC =~ ^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$ ]] || { echo "thor-up: set THOR_MAC (aa:bb:cc:dd:ee:ff) in $H for Wake-on-LAN" >&2; exit 2; }
+if [ "${1:-}" = --dry-run ]; then
+  echo "thor-up: probe $THOR:22; if down, Wake-on-LAN $MAC to ${BC:+$BC }255.255.255.255, ssh heimdall fleet-wake wake thor, wait up to 120 s"
+  exit 0
+fi
+python3 - "$MAC" $BC 255.255.255.255 <<'PY'
+import socket, sys
+pkt = b'\xff' * 6 + bytes.fromhex(sys.argv[1].replace(':', '')) * 16
+s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM); s.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+for a in sys.argv[2:]:
+    try: s.sendto(pkt, (a, 9))
+    except OSError: pass
+PY
+ssh -o BatchMode=yes -o ConnectTimeout=5 heimdall /usr/local/bin/fleet-wake wake thor >/dev/null 2>&1 || true
+for _ in $(seq 1 40); do up && exit 0; sleep 3; done
+echo "thor-up: thor did not answer within 120 s" >&2; exit 1

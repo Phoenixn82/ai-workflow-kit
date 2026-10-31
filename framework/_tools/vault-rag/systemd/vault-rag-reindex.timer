@@ -1,0 +1,10 @@
+[Unit]
+Description=Daily vault-rag reindex (02:40 Etc/UTC)
+
+[Timer]
+OnCalendar=*-*-* 02:40:00 Etc/UTC
+RandomizedDelaySec=5min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

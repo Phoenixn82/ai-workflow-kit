@@ -1,0 +1,135 @@
+#!/usr/bin/env python3
+"""ollama-embed-check: prove a vault-rag embed co-resides with whatever big model thor has loaded (audit b5).
+
+Default (non-disruptive): note what /api/ps has loaded, send one nomic-embed-text embed, then assert that
+  - the embed returned a 768-dim vector,
+  - every model loaded before is still loaded (nothing evicted),
+  - nomic-embed-text is resident with size_vram == 0 (CPU-only, so it never competes for VRAM).
+--load MODEL first loads MODEL with a 1-token generate (disruptive: may evict another big model).
+Exit 0 = pass, 1 = fail. Host: OLLAMA_HOST, else THOR_OLLAMA_URL from the environment or
+~/.config/ai-workflow-kit/hosts.env (KIT_HOSTS_ENV overrides the path). --self-test runs offline.
+"""
+import json, os, sys, time, urllib.request
+from pathlib import Path
+
+KIT_HOSTS = Path(os.environ.get("KIT_HOSTS_ENV") or Path.home() / ".config/ai-workflow-kit/hosts.env")
+
+
+def hosts_env(key):
+    """KEY from the environment, else from the kit's hosts.env (last KEY=value wins); "" when missing."""
+    if os.environ.get(key):
+        return os.environ[key]
+    try:
+        vals = [v.strip().strip("'\"") for k, _, v in (line.partition("=") for line in KIT_HOSTS.read_text().splitlines())
+                if k.strip() == key]
+    except OSError:
+        return ""
+    return vals[-1] if vals else ""
+
+
+def host(raw):
+    raw = (raw or "").strip().rstrip("/")
+    return raw if not raw or "://" in raw else "http://" + raw
+
+
+HOST = host(os.environ.get("OLLAMA_HOST") or hosts_env("THOR_OLLAMA_URL"))
+EMBED = "nomic-embed-text"
+
+
+def call(path, payload=None, timeout=300):
+    req = urllib.request.Request(HOST + path, data=None if payload is None else json.dumps(payload).encode(),
+                                 headers={"Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        return json.loads(r.read())
+
+
+def loaded():
+    return {m["name"]: m for m in call("/api/ps", timeout=10)["models"]}
+
+
+def verdict(before, after, vec):
+    """List of failures (empty = pass)."""
+    bad = []
+    if not (isinstance(vec, list) and len(vec) == 768):
+        bad.append(f"embed returned {len(vec) if isinstance(vec, list) else type(vec).__name__}, want 768 dims")
+    gone = sorted(n for n in before if n not in after)
+    if gone:
+        bad.append("evicted by the embed: " + ", ".join(gone))
+    emb = [m for n, m in after.items() if n in (EMBED, EMBED + ":latest")]  # not the GPU :v1.5 rollback tag
+    if not emb:
+        bad.append(f"{EMBED} not resident after the embed")
+    elif emb[0].get("size_vram", 0) != 0:
+        bad.append(f"{EMBED} holds {emb[0]['size_vram'] / 2**20:.0f} MiB VRAM (want 0: num_gpu 0 lost? "
+                   "re-run: ollama create nomic-embed-text:latest -f nomic-embed-text-cpu.Modelfile)")
+    return bad
+
+
+def self_test():
+    v = [0.0] * 768
+    big = {"qwen3.8-text:27b": {"name": "qwen3.8-text:27b", "size_vram": 17 << 30}}
+    ok = dict(big, **{"nomic-embed-text:latest": {"name": "nomic-embed-text:latest", "size_vram": 0}})
+    assert verdict(big, ok, v) == []
+    assert verdict({}, {"nomic-embed-text:latest": {"size_vram": 0}}, v) == []
+    assert verdict(big, {"nomic-embed-text:latest": {"size_vram": 0}}, v) == ["evicted by the embed: qwen3.8-text:27b"]
+    assert verdict(big, dict(big, **{"nomic-embed-text:latest": {"size_vram": 600 << 20}}), v)[0].startswith(EMBED + " holds 600 MiB")
+    assert verdict(big, big, v) == [EMBED + " not resident after the embed"]
+    assert verdict(big, ok, [0.0] * 3)[0].startswith("embed returned 3")
+    v15 = dict(ok, **{"nomic-embed-text:v1.5": {"size_vram": 600 << 20}})  # a GPU v1.5 beside the CPU :latest
+    assert verdict(big, v15, v) == []
+    assert host("thor:11434/") == "http://thor:11434" and host("") == "" and host("https://x/") == "https://x"
+    global HOST, KIT_HOSTS
+    import tempfile
+    saved, real = os.environ.pop("THOR_OLLAMA_URL", None), KIT_HOSTS
+    with tempfile.TemporaryDirectory() as d:
+        KIT_HOSTS = Path(d) / "hosts.conf"
+        KIT_HOSTS.write_text("THOR_OLLAMA_URL=http://192.0.2.7:11434\n")
+        assert host(hosts_env("THOR_OLLAMA_URL")) == "http://192.0.2.7:11434"
+        HOST, real_host = "", HOST  # nothing configured: a clean FAIL naming the setting
+        try:
+            assert main([]) == 1
+        finally:
+            HOST, KIT_HOSTS = real_host, real
+            if saved is not None:
+                os.environ["THOR_OLLAMA_URL"] = saved
+    HOST, real = "http://127.0.0.1:9", HOST  # unreachable (thor asleep): a clean FAIL, not a traceback
+    try:
+        assert main([]) == 1
+    finally:
+        HOST = real
+    print("self-test passed"); return 0
+
+
+def main(argv):
+    if argv == ["--self-test"]:
+        return self_test()
+    if argv and argv[:1] != ["--load"] or argv[:1] == ["--load"] and len(argv) != 2:
+        print(__doc__); return 2
+    if not HOST:
+        print(f"FAIL: no Ollama host: set THOR_OLLAMA_URL in {KIT_HOSTS} (or OLLAMA_HOST)")
+        return 1
+    if argv[:1] == ["--load"]:
+        t = time.monotonic()
+        call("/api/generate", {"model": argv[1], "prompt": "hi", "stream": False, "options": {"num_predict": 1}}, 600)
+        print(f"loaded {argv[1]} in {time.monotonic() - t:.1f}s")
+    try:
+        before = loaded()
+    except OSError as e:
+        print(f"FAIL: ollama unreachable at {HOST} ({e!r}); thor asleep? run thor-up first")
+        return 1
+    print("before:", ", ".join(f"{n} ({m.get('size_vram', 0) / 2**30:.1f} GiB VRAM)" for n, m in before.items()) or "nothing")
+    t = time.monotonic()
+    try:
+        vec = call("/api/embed", {"model": EMBED, "input": ["search_query: does the embed evict the big model?"]}, 60)["embeddings"][0]
+    except OSError as e:  # a timeout here is Ollama's FIFO: a request queued ahead of us waits on an eviction
+        print(f"FAIL: embed did not return in 60 s ({e!r}); ollama ps now:", ", ".join(loaded()) or "nothing")
+        return 1
+    dt = time.monotonic() - t
+    after = loaded()
+    print(f"embed {dt:.3f}s{' (over the vault-rag hook budget of 3 s)' if dt > 3 else ''}; after:", ", ".join(f"{n} ({m.get('size_vram', 0) / 2**30:.1f} GiB VRAM)" for n, m in after.items()))
+    bad = verdict(before, after, vec)
+    print("FAIL: " + "; ".join(bad) if bad else "PASS: embed co-resides, nothing evicted")
+    return 1 if bad else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

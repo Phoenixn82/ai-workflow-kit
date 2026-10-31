@@ -1,0 +1,179 @@
+#!/usr/bin/env python3
+"""wake-watch: one-shot Wake-on-LAN recovery for the boxes you care about. Runs on heimdall.
+
+  wake-watch check          (timer, every 2 min) probe every host; after 3 misses in a row from a host
+                            that WAS up, send ONE magic packet and alert. Never repeats, never wakes a
+                            host that was already off when watching began.
+  wake-watch status         print each host's state
+  wake-watch hold NAME      mark NAME as deliberately off (sent by NAME itself at clean shutdown)
+  wake-watch wake NAME      send a magic packet now
+  wake-watch --self-test    run the built-in logic tests
+
+Liveness = TCP connect to port 22 (never ping: many hosts and firewalls drop ICMP).
+
+Config: /etc/wake-watch.conf (or $WAKE_WATCH_CONF), one host per line:
+    # name   address-to-probe   wired-MAC
+    mybox      mybox            XX:XX:XX:XX:XX:XX
+  The address is usually the Tailscale MagicDNS name. The MAC is the WIRED port's MAC
+  (Wi-Fi cannot be woken). Optional keys in the same file:
+    BROADCAST=255.255.255.255        extra broadcast addresses, comma separated (e.g. your LAN's x.x.x.255)
+    PORT=22                          TCP port used as the liveness probe
+State: $WAKE_WATCH_STATE (default /var/lib/wake-watch). A file named HALT there pauses `check`.
+Alerts: /usr/local/bin/alert MESSAGE, if it exists."""
+import os
+import re
+import socket
+import subprocess
+import sys
+from pathlib import Path
+
+try:
+    import fcntl  # not on Windows; locking is skipped there
+except ImportError:
+    fcntl = None
+
+CONF = Path(os.environ.get("WAKE_WATCH_CONF", "/etc/wake-watch.conf"))
+STATE = Path(os.environ.get("WAKE_WATCH_STATE", "/var/lib/wake-watch"))
+ALERT = os.environ.get("WAKE_WATCH_ALERT", "/usr/local/bin/alert")
+
+
+def next_state(state, alive):
+    """unknown -> (alive) up -> miss1 -> miss2 -> woke (send once). hold/woke/unknown stay put while down."""
+    if alive:
+        return "up", False
+    if state == "up":
+        return "miss1", False
+    if state == "miss1":
+        return "miss2", False
+    if state == "miss2":
+        return "woke", True
+    return state, False
+
+
+def parse_conf(text):
+    hosts, opts = {}, {"BROADCAST": "255.255.255.255", "PORT": "22"}
+    for line in text.splitlines():
+        line = line.split("#", 1)[0].strip()
+        if not line:
+            continue
+        if "=" in line and len(line.split()) == 1:
+            k, _, v = line.partition("=")
+            opts[k.strip().upper()] = v.strip()
+            continue
+        parts = line.split()
+        if len(parts) != 3:
+            raise ValueError(f"bad line (want: name address mac): {line}")
+        name, addr, mac = parts
+        # the name becomes a state file name and part of an alert command line (cmd.exe on Windows)
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", name) or name == "HALT":
+            raise ValueError(f"bad name (letters, digits, . _ - only): {name}")
+        raw = mac.replace(":", "").replace("-", "")
+        if len(raw) != 12 or any(c not in "0123456789abcdefABCDEF" for c in raw):
+            raise ValueError(f"bad MAC for {name}: {mac}")
+        hosts[name] = (addr, raw.lower())
+    return hosts, opts
+
+
+def reachable(addr, port):
+    try:
+        with socket.create_connection((addr, port), timeout=3):
+            return True
+    except OSError:
+        return False
+
+
+def alert(msg):
+    if os.access(ALERT, os.X_OK):
+        try:
+            subprocess.run([ALERT, msg], timeout=30)
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+
+
+def magic(mac_hex):
+    return b"\xff" * 6 + bytes.fromhex(mac_hex) * 16
+
+
+def wake(name, mac_hex, broadcasts):
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+        for address in broadcasts:
+            sock.sendto(magic(mac_hex), (address, 9))
+    print(f"{name}: sent Wake-on-LAN packet")
+
+
+def self_test():
+    seq = [next_state(s, False) for s in ("unknown", "up", "miss1", "miss2", "hold", "woke")]
+    assert seq == [("unknown", False), ("miss1", False), ("miss2", False), ("woke", True), ("hold", False), ("woke", False)]
+    assert next_state("hold", True) == ("up", False) and next_state("woke", True) == ("up", False)
+    mac = ":".join(["0A"] * 6)  # built at runtime so no MAC-shaped literal sits in the file
+    h, o = parse_conf(f"# c\nBROADCAST=255.255.255.255,10.0.0.255\nbox  box.example  {mac}\n")
+    assert h == {"box": ("box.example", "0a" * 6)} and o["BROADCAST"].count(",") == 1 and o["PORT"] == "22"
+    assert len(magic("0a" * 6)) == 102
+    for bad in ("box box.example", "box a XX:XX:XX:XX:XX:XX", f'a"&calc a {mac}', f"..\\x a {mac}", f".. a {mac}",
+                f"HALT a {mac}"):
+        try:
+            parse_conf(bad)
+            raise AssertionError("accepted " + bad)
+        except ValueError:
+            pass
+    print("self-test passed")
+
+
+def main(args):
+    if args == ["--self-test"]:
+        self_test()
+        return 0
+    if not args or args[0] not in ("check", "hold", "wake", "status"):
+        print(__doc__.split("\n\n")[1], file=sys.stderr)
+        return 2
+    try:
+        hosts, opts = parse_conf(CONF.read_text())
+    except (OSError, ValueError) as e:
+        print(f"wake-watch: config {CONF}: {e}", file=sys.stderr)
+        return 2
+    action = args[0]
+    if action in ("hold", "wake") and (len(args) != 2 or args[1] not in hosts):
+        print(f"wake-watch: unknown host; known: {', '.join(hosts) or 'none'}", file=sys.stderr)
+        return 2
+    if action in ("check", "status") and len(args) != 1:
+        return 2
+    if action == "check" and (STATE / "HALT").exists():
+        print("wake-watch: HALT present, not checking")
+        return 0
+    broadcasts = [b.strip() for b in opts["BROADCAST"].split(",") if b.strip()]
+    port = int(opts["PORT"])
+    STATE.mkdir(parents=True, exist_ok=True)
+    with (STATE / "lock").open("w") as lock:
+        if fcntl:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+        for name, (addr, mac) in hosts.items():
+            if action in ("hold", "wake") and name != args[1]:
+                continue
+            file = STATE / name
+            old = file.read_text().strip() if file.exists() else "unknown"
+            if action == "status":
+                print(f"{name}: {old}")
+                continue
+            if action == "hold":
+                new, send = "hold", False
+            elif action == "wake":
+                new, send = "woke", True
+            else:
+                new, send = next_state(old, reachable(addr, port))
+            if send:
+                try:
+                    wake(name, mac, broadcasts)
+                except OSError as error:
+                    print(f"{name}: wake packet failed: {error}", file=sys.stderr)
+                    continue  # state unchanged: retried on the next check
+                if action == "check":
+                    alert(f"{name} went offline unexpectedly; sent one Wake-on-LAN packet.")
+            if new != old:
+                file.write_text(new + "\n")
+                print(f"{name}: {old} -> {new}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

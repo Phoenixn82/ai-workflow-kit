@@ -1,0 +1,10 @@
+[Unit]
+Description=x-scroll daily at 19:00 Etc/UTC + 0-3 h random delay (different each day)
+
+[Timer]
+OnCalendar=*-*-* 19:00:00 Etc/UTC
+RandomizedDelaySec=3h
+Persistent=false
+
+[Install]
+WantedBy=timers.target

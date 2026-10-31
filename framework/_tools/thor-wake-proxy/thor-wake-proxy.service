@@ -1,0 +1,11 @@
+[Unit]
+Description=Forward to thor's FreeLLMAPI (3002->3001), Ollama (11435->11434), Immich (12283->2283) and Samba (10445->445), waking thor first
+After=network-online.target
+
+[Service]
+ExecStart=%h/.local/bin/thor-wake-proxy 3002:3001 11435:11434 12283:2283 10445:445
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

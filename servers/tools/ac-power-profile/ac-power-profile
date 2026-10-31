@@ -1,0 +1,20 @@
+#!/bin/sh
+# ac-power-profile: power profile follows the charger. Plugged in: performance; on battery: power-saver.
+# Run by ac-power-profile.service, which udev starts on every plug or unplug and systemd at boot.
+# Stands aside while host-heat is cooling the machine (host-heat owns the profile until it restores it).
+# ac-power-profile --dry-run: print what it would set, change nothing.
+# AC_POWER_SYS and HOST_HEAT_STATE override /sys/class/power_supply and /var/lib/host-heat/state.json (tests).
+set -eu
+sys=${AC_POWER_SYS:-/sys/class/power_supply}
+heat=${HOST_HEAT_STATE:-/var/lib/host-heat/state.json}
+dry=0; [ "${1:-}" = --dry-run ] && dry=1
+[ $dry = 1 ] || sleep 3   # USB-C chargers report online=0 for a moment right after plug-in
+if grep -Eq '"active": ?true' "$heat" 2>/dev/null; then
+  echo "ac-power-profile: host-heat is cooling, leaving the profile alone"; exit 0
+fi
+want=power-saver
+for s in "$sys"/*; do
+  if [ "$(cat "$s/type" 2>/dev/null)" = Mains ] && [ "$(cat "$s/online" 2>/dev/null)" = 1 ]; then want=performance; fi
+done
+if [ $dry = 1 ]; then echo "ac-power-profile: would set $want"; exit 0; fi
+exec powerprofilesctl set "$want"

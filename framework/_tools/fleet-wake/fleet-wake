@@ -1,0 +1,214 @@
+#!/usr/bin/env python3
+"""One-shot Wake-on-LAN recovery for Odin and Thor, run on Heimdall.
+Hosts come from ~/.config/ai-workflow-kit/hosts.env (KIT_HOSTS_ENV overrides the path; an environment variable of the
+same name wins): each of odin/thor with <NAME>_MAC set is watched at <NAME>_HOST, port 22. Optional: <NAME>_UNLOCK_HOST
+(the LAN address its boot image answers ssh on while it waits for the disk passphrase) and LAN_BROADCAST."""
+import fcntl
+import os
+import socket
+import subprocess
+import sys
+from pathlib import Path
+
+NAMES = ("odin", "thor")
+KIT_HOSTS = Path(os.environ.get("KIT_HOSTS_ENV") or Path.home() / ".config/ai-workflow-kit/hosts.env")
+STATE = Path.home() / ".local/state/fleet-wake"
+HALT = Path.home() / "AI_Projects/_system/automations/HALT"
+
+
+def hosts_env(key):
+    """KEY from the environment, else from the kit's hosts.env (last KEY=value wins); "" when missing."""
+    if os.environ.get(key):
+        return os.environ[key]
+    try:
+        vals = [v.strip().strip("'\"") for k, _, v in (line.partition("=") for line in KIT_HOSTS.read_text().splitlines())
+                if k.strip() == key]
+    except OSError:
+        return ""
+    return vals[-1] if vals else ""
+
+
+def fleet():
+    """{name: (address, mac)} for each host with <NAME>_MAC set; SystemExit says which setting is missing."""
+    hosts = {}
+    for name in NAMES:
+        mac = hosts_env(f"{name.upper()}_MAC")
+        if mac:
+            ip = hosts_env(f"{name.upper()}_HOST")
+            if not ip:
+                raise SystemExit(f"fleet-wake: set {name.upper()}_HOST in {KIT_HOSTS} ({name.upper()}_MAC is set)")
+            hosts[name] = (ip, mac)
+    if not hosts:
+        raise SystemExit(f"fleet-wake: set THOR_HOST and THOR_MAC (or ODIN_HOST and ODIN_MAC) in {KIT_HOSTS}")
+    return hosts
+
+
+def unlock_probe(name):
+    # odin's boot image runs dropbear on this LAN address while it waits for the LUKS passphrase
+    # (Tailscale is not up yet), so "LAN ssh answers, tailnet does not" = sitting at the unlock prompt.
+    return hosts_env(f"{name.upper()}_UNLOCK_HOST")
+
+
+UNLOCK_DIR = Path.home() / ".config/fleet-wake"
+
+
+def auto_unlock(name, host):
+    """Pipe <name>.luks (its own LUKS key slot, the user 2026-10-28) into the boot image's cryptsetup_shell over ssh.
+    Pinned host key and a dedicated client key; False when no key is set up or ssh fails. The shell's exit code
+    is not proof (it ends on killall), so success shows up as the tailnet answering on a later check."""
+    key = UNLOCK_DIR / f"{name}.luks"
+    if not key.exists():
+        return False
+    try:
+        subprocess.run(["ssh", "-T", "-i", str(Path.home() / ".ssh/fleet-wake-unlock"), "-o", "IdentitiesOnly=yes",
+                        "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes", "-o", "ConnectTimeout=5",
+                        "-o", f"UserKnownHostsFile={UNLOCK_DIR / 'unlock_known_hosts'}", f"root@{host}"],
+                       input=key.read_bytes().rstrip(b"\n") + b"\n", capture_output=True, timeout=90)
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return True
+
+
+def next_state(state, alive):
+    if alive:
+        # A hold is set a second or two before the host suspends; one alive reading right after it
+        # must not clear it (audit 2026-10-12: "hold clears early" raced the suspend and woke the host).
+        if state == "hold":
+            return "hold1", False
+        return "up", False
+    if state == "hold1":
+        return "hold", False
+    if state == "up":
+        return "miss1", False
+    if state == "miss1":
+        return "miss2", False
+    if state == "miss2":
+        return "woke", True
+    return state, False  # hold, woke, or unknown: no repeated or speculative wake
+
+
+def reachable(ip):
+    try:
+        with socket.create_connection((ip, 22), timeout=2):
+            return True
+    except OSError:
+        return False
+
+
+def alert(msg):
+    try:
+        subprocess.run(["/usr/local/bin/heimdall-alert", msg], timeout=30)
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+
+
+def wake(name, mac):
+    packet = b"\xff" * 6 + bytes.fromhex(mac.replace(":", "")) * 16
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+        for address in [a for a in (hosts_env("LAN_BROADCAST"), "255.255.255.255") if a]:
+            sock.sendto(packet, (address, 9))
+    print(f"{name}: sent Wake-on-LAN packet")
+
+
+def self_test_config():
+    """hosts.env lookup: missing settings name themselves, the environment wins, LAN_BROADCAST is optional."""
+    global KIT_HOSTS
+    import tempfile
+    keys = [f"{n.upper()}_{k}" for n in NAMES for k in ("HOST", "MAC", "UNLOCK_HOST")] + ["LAN_BROADCAST"]
+    saved, real = {k: os.environ.pop(k) for k in keys if k in os.environ}, KIT_HOSTS
+    with tempfile.TemporaryDirectory() as d:
+        KIT_HOSTS = Path(d) / "hosts.conf"
+        try:
+            for text, want in (("", "set THOR_HOST and THOR_MAC"), ("ODIN_MAC=aa:bb:cc:dd:ee:ff\n", "set ODIN_HOST")):
+                KIT_HOSTS.write_text(text)
+                try:
+                    fleet()
+                    raise AssertionError(f"fleet() accepted {text!r}")
+                except SystemExit as e:
+                    assert want in str(e) and str(KIT_HOSTS) in str(e), e
+            KIT_HOSTS.write_text('# c\nTHOR_HOST=192.0.2.7\nTHOR_MAC="aa:bb:cc:dd:ee:ff"\nTHOR_HOST=192.0.2.8\n')
+            assert fleet() == {"thor": ("192.0.2.8", "aa:bb:cc:dd:ee:ff")} and unlock_probe("thor") == ""
+            os.environ["THOR_HOST"] = "192.0.2.9"
+            assert fleet() == {"thor": ("192.0.2.9", "aa:bb:cc:dd:ee:ff")}
+            assert main(["wake", "odin"]) == 2  # odin is not configured here
+            assert auto_unlock("no-such-host", "192.0.2.1") is False  # no key file: never dials out
+        finally:
+            os.environ.pop("THOR_HOST", None)
+            os.environ.update(saved)
+            KIT_HOSTS = real
+
+
+def main(args):
+    if args == ["--self-test"]:
+        assert [next_state(s, False) for s in ("unknown", "up", "miss1", "miss2", "hold", "woke")] == [
+            ("unknown", False), ("miss1", False), ("miss2", False),
+            ("woke", True), ("hold", False), ("woke", False),
+        ]
+        assert next_state("hold", True) == ("hold1", False)      # first alive reading keeps the hold
+        assert next_state("hold1", True) == ("up", False)        # second consecutive alive clears it
+        assert next_state("hold1", False) == ("hold", False)     # went down after one reading: still on purpose
+        assert next_state("locked", False) == ("locked", False) and next_state("locked", True) == ("up", False)
+        self_test_config()
+        print("self-test passed")
+        return 0
+    if not args or args[0] not in ("check", "hold", "wake", "status"):
+        print("usage: fleet-wake check|status|hold <odin|thor>|wake <odin|thor>", file=sys.stderr)
+        return 2
+    action = args[0]
+    if action == "check" and (HALT.exists() or (STATE / "HALT").exists()):
+        print("fleet-wake: HALT present")
+        return 0
+    if action in ("check", "status") and len(args) != 1:
+        return 2
+    hosts = fleet()
+    if action in ("hold", "wake") and (len(args) != 2 or args[1] not in hosts):
+        return 2
+    STATE.mkdir(parents=True, exist_ok=True)
+    with (STATE / "lock").open("w") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        for name, (ip, mac) in hosts.items():
+            if action in ("hold", "wake") and name != args[1]:
+                continue
+            file = STATE / name
+            old = file.read_text().strip() if file.exists() else "unknown"
+            if action == "status":
+                print(f"{name}: {old}")
+                continue
+            if action == "hold":
+                new, send = "hold", False
+            elif action == "wake":
+                new, send = "woke", True
+            else:
+                alive = reachable(ip)
+                probe = unlock_probe(name)
+                if not alive and probe and reachable(probe):
+                    new, send = "locked", False  # next_state holds "locked" until the tailnet answers
+                else:
+                    new, send = next_state(old, alive)
+            if send:
+                try:
+                    wake(name, mac)
+                except OSError as error:
+                    print(f"{name}: wake packet failed: {error}", file=sys.stderr)
+                    continue  # retry when Heimdall's network is available
+                if action == "check":
+                    alert(f"{name} went offline unexpectedly; heimdall sent a Wake-on-LAN packet.")
+            failed = STATE / f"{name}.unlock-failed"
+            if new == "locked":
+                sent = auto_unlock(name, unlock_probe(name))
+                if old != "locked" and not sent:
+                    alert(f"{name} is waiting for its disk password. From raven: ssh odin-unlock")
+                elif old == "locked" and not failed.exists():  # a whole check later and still locked
+                    failed.touch()
+                    alert(f"{name} is still at its disk password after heimdall's unlock try. From raven: ssh odin-unlock")
+            elif failed.exists():
+                failed.unlink()
+            if new != old:
+                file.write_text(new + "\n")
+                print(f"{name}: {old} -> {new}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

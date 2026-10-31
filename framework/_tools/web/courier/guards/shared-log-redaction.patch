@@ -1,0 +1,27 @@
+--- a/codex-claude-shared-log.sh
++++ b/codex-claude-shared-log.sh
+@@ -53,6 +53,16 @@
+     fi
+ }
+ 
++# Credential courier (spec §3.5): nothing after `web cred` / `web login` reaches the shared log.
++# Newlines are flattened first so a multi-line command can't carry text past the cut.
++redact_web_cred() {
++    local out
++    out=$(printf '%s' "${1-}" | tr '\r\n\t' '   ' \
++        | sed -E 's/(^|[^[:alnum:]_-])(web[[:space:]]+(cred|login))([^[:alnum:]_-].*)?$/\1\2 [redacted]/') \
++        || out="[redacted]"
++    printf '%s' "$out"
++}
++
+ # Normalized path relative to project root when inside it, else absolute.
+ # Linux filesystems are case-sensitive, so the prefix match is too
+ # (the Windows original matched case-insensitively).
+@@ -184,6 +194,7 @@
+             if [[ -n "$desc" ]]; then
+                 text="$desc"
+             fi
++            text=$(redact_web_cred "$text")
+             summary="ran: $(shorten "$text")"
+             ;;
+     esac

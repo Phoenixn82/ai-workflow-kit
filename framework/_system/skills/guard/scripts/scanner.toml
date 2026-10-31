@@ -1,0 +1,19 @@
+# Guard-owned secret-scanner config. public_push_gate.py always passes it with --config, so a .gitleaks.toml or
+# .betterleaks.toml committed to the scanned repo can never replace or weaken the rules. Works for betterleaks and
+# the gitleaks fallback.
+title = "guard public-push gate"
+
+[extend]
+useDefault = true
+
+# Betterleaks only reports an AWS key ID when a secret key sits within 5 lines (composite rule); gitleaks reports the
+# bare ID. Keep the stricter gitleaks behaviour on both scanners: a bare key ID in a public repo still blocks.
+[[rules]]
+id = "guard-aws-key-id"
+description = "Bare AWS access key ID"
+regex = '''\b((?:A3T[A-Z0-9]|AKIA|ASIA|ABIA|ACCA)[A-Z2-7]{16})\b'''
+keywords = ["a3t", "akia", "asia", "abia", "acca"]
+entropy = 3.0
+
+[[rules.allowlists]]
+regexes = ['''.+EXAMPLE$''']

@@ -1,0 +1,267 @@
+#!/usr/bin/env python3
+"""thor-sleep: suspend thor after an hour with nothing happening, so nothing unused runs all day.
+logind's IdleAction only watches login sessions, so a host can sleep mid-job
+and fleet-wake re-wakes it. This checks real work instead,
+tells heimdall the sleep is on purpose (thor's key on heimdall is forced to `fleet-wake hold thor`),
+then suspends. Anything that needs thor runs `thor-up` on odin first.
+Root timer every 10 min. Kill switch: touch /etc/thor-sleep.disable. `--dry-run` logs only (writes no state).
+Only a confirmed set of readings counts toward idle: a probe that errors, times out or returns junk is a busy reason
+("probe failed: ...") and resets the idle counter (astra round 1 #13).
+"""
+import contextlib, io, json, os, subprocess, sys, tempfile, time, urllib.error, urllib.request
+from pathlib import Path
+
+IDLE_CHECKS = 6            # 6 x 10 min = 60 min of nothing before sleeping
+LOAD_MAX = 0.5
+STATE = Path("/var/lib/thor-sleep"); COUNT = STATE / "idle-count"
+GPU_LOW = STATE / "gpu-low-since"   # "<epoch> <runner pids>": first check that saw these runners with every GPU <= 2 %
+RUNNER_IDLE = 600          # the same Ollama runner holding VRAM at <= 2 % this long is not work
+RUNNERS = ("llama-server", "ollama")
+BUSY_PROCS = ("restic", "rsync", "ffmpeg", "blender", "sftp-server", "apt", "dpkg", "docker-build")
+DISABLE = Path("/etc/thor-sleep.disable")
+
+
+def gpu_reasons(util, apps, low_file, now, save=True):
+    """util: % per GPU; apps: (pid, name) per compute process. An Ollama runner can hold VRAM while /api/ps lists
+    nothing (mid-load, or a runner that never exits), and "any gpu process = busy" would
+    then keep thor up for good, so the SAME runner pid(s) count as idle once every GPU sat at <= 2 % for RUNNER_IDLE.
+    A new or reloaded runner restarts the clock: a model mid-load is not in /api/ps yet and loads at 0 % GPU, so
+    timing GPU-low alone excused it at once after an idle hour. Any other compute process stays busy."""
+    r = ["gpu busy"] if any(u > 2 for u in util) else []
+    runners = ",".join(sorted({p for p, a in apps if os.path.basename(a) in RUNNERS}))
+    low_for, fresh = 0, True
+    if runners and not r:
+        try:
+            since, pids = low_file.read_text().split()
+            if pids == runners:
+                low_for, fresh = now - float(since), False
+        except (OSError, ValueError):
+            pass
+        if fresh and save:
+            low_file.write_text(f"{now} {runners}")
+    elif save:
+        low_file.unlink(missing_ok=True)
+    # ponytail: sampled once per 10-min tick, so "10 consecutive minutes" = two ticks agree; a spike between ticks
+    # is missed. Safe only because a runner serving a request is also in /api/ps ("ollama model loaded") or adds
+    # load: a model offloaded to the CPU can answer with the GPU nearly idle
+    others = [a for p, a in apps if os.path.basename(a) not in RUNNERS]
+    if others:
+        r.append("gpu process")
+    elif apps and low_for < RUNNER_IDLE:
+        r.append(f"gpu process (ollama runner, <= 2 % for {low_for // 60:.0f}/{RUNNER_IDLE // 60} min)")
+    elif apps:
+        print(f"note: ollama runner holds VRAM, GPUs <= 2 % for {low_for // 60:.0f} min: not counted as busy")
+    return r
+
+
+class ProbeFailed(Exception):
+    pass
+
+
+def probe(cmd):
+    """stdout of an activity probe; a missing binary, timeout or non-zero exit raises ProbeFailed."""
+    try:
+        p = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        raise ProbeFailed(f"{cmd[0]} ({type(e).__name__})")
+    if p.returncode != 0:
+        raise ProbeFailed(f"{cmd[0]} exit {p.returncode}")
+    return p.stdout
+
+
+def busy_reasons(save=True):
+    r, runners = [], 0
+    try:
+        if probe(["who"]).strip():
+            r.append("login session")
+    except ProbeFailed as e:
+        r.append(f"probe failed: {e}")
+    if os.getloadavg()[0] > LOAD_MAX:
+        r.append(f"load {os.getloadavg()[0]:.2f}")
+    try:
+        gpu = [int(x) for x in probe(["nvidia-smi", "--query-gpu=utilization.gpu", "--format=csv,noheader,nounits"]).split()]
+        out = probe(["nvidia-smi", "--query-compute-apps=pid,process_name", "--format=csv,noheader"]).splitlines()
+        if not gpu or any("," not in line for line in out if line.strip()):  # junk line: not a reading
+            raise ValueError("no GPU readings or a compute-apps line without a pid")
+        apps = [(p.strip(), a.strip()) for p, a in (line.split(",", 1) for line in out if line.strip())]
+        runners = len({p for p, a in apps if os.path.basename(a) in RUNNERS})
+        r += gpu_reasons(gpu, apps, GPU_LOW, time.time(), save)
+    except (ProbeFailed, OSError, ValueError) as e:
+        r.append(f"probe failed: {e}" if isinstance(e, ProbeFailed) else f"probe failed: nvidia-smi ({type(e).__name__})")
+    embed_only = False
+    try:
+        with urllib.request.urlopen("http://127.0.0.1:11434/api/ps", timeout=3) as f:
+            body = f.read()
+    except Exception:  # unreachable is only a reading ("nothing loaded") when the service is really down
+        try:
+            state = subprocess.run(["systemctl", "is-active", "ollama"], capture_output=True, text=True,
+                                   timeout=10).stdout.strip() or "unknown"
+        except (OSError, subprocess.TimeoutExpired):
+            state = "unknown"
+        if state not in ("inactive", "failed"):
+            r.append(f"probe failed: ollama unreachable (service {state})")
+    else:
+        try:  # only a list of {"name": str} is a reading; {"models": {}} iterated as "nothing loaded" (astra2 #13)
+            models = json.loads(body)["models"]
+            if not isinstance(models, list) or not all(isinstance(m, dict) and isinstance(m.get("name"), str)
+                                                       and m["name"] for m in models):
+                raise ValueError("models is not a list of named entries")
+            loaded = [m["name"] for m in models]
+        except Exception:  # any junk, incl. RecursionError on a deeply nested body, is not a reading (astra2 review)
+            r.append("probe failed: ollama /api/ps malformed")
+        else:
+            # vault-recall keeps nomic-embed-text resident between prompts; an embedding model alone is not work
+            embed_only = bool(loaded) and all(n.startswith("nomic-embed-text") for n in loaded)
+            if loaded and not embed_only:
+                r.append("ollama model loaded")
+    # the resident embed model's runner is small and always loaded; utilisation <= 2 % still catches real work. A second runner
+    # beside it is a big model mid-load (possible once OLLAMA_MAX_LOADED_MODELS > 1), so that one stays busy
+    if embed_only and runners <= 1:
+        r = [x for x in r if not x.startswith("gpu process (ollama runner")]
+    try:
+        ps = probe(["ps", "-eo", "comm="]).split()
+        if not ps:
+            raise ProbeFailed("ps empty")
+        hits = sorted({p for p in ps if p in BUSY_PROCS})
+        if hits:
+            r.append("procs " + ",".join(hits))
+    except ProbeFailed as e:
+        r.append(f"probe failed: {e}")
+    return r
+
+
+def self_test_probes():
+    """Fake probes: confirmed idle readings count toward idle; any failed probe is busy and resets the counter."""
+    global STATE, COUNT, GPU_LOW, DISABLE
+    real = subprocess.run, urllib.request.urlopen, os.getloadavg, (STATE, COUNT, GPU_LOW, DISABLE)
+
+    def fake(fail=(), ollama="active", util="0\n0\n", apps="", body=b'{"models": []}'):
+        def run(cmd, **kw):
+            if cmd[0] == "systemctl":
+                return subprocess.CompletedProcess(cmd, 0, ollama + "\n", "")
+            if cmd[0] in fail:
+                if cmd[0] == "who":
+                    raise subprocess.TimeoutExpired(cmd, 10)
+                return subprocess.CompletedProcess(cmd, 9, "", "probe error")
+            out = {"who": "", "ps": "systemd\nbash\n"}.get(cmd[0], util if "--query-gpu=utilization.gpu" in cmd else apps)
+            return subprocess.CompletedProcess(cmd, 0, out, "")
+
+        def urlopen(url, timeout=None):
+            if "ollama" in fail:
+                raise urllib.error.URLError("connection refused")
+            return io.BytesIO(body)
+        subprocess.run, urllib.request.urlopen = run, urlopen
+
+    try:
+        os.getloadavg = lambda: (0.0, 0.0, 0.0)
+        fake()
+        assert busy_reasons(save=False) == [], busy_reasons(save=False)       # confirmed idle readings
+        fake(fail=("ollama",), ollama="inactive")
+        assert busy_reasons(save=False) == []                                 # Ollama down, service stopped: a reading
+        fake(fail=("who", "nvidia-smi", "ollama", "ps"))
+        got = busy_reasons(save=False)
+        assert got == ["probe failed: who (TimeoutExpired)", "probe failed: nvidia-smi exit 9",
+                       "probe failed: ollama unreachable (service active)", "probe failed: ps exit 9"], got
+        fake(util="[N/A]\n")
+        assert busy_reasons(save=False) == ["probe failed: nvidia-smi (ValueError)"]
+        fake(util="")
+        assert busy_reasons(save=False) == ["probe failed: nvidia-smi (ValueError)"]
+        fake(apps="Failed to initialize NVML: Unknown Error\n")  # exit 0 but junk: not "no GPU processes"
+        assert busy_reasons(save=False) == ["probe failed: nvidia-smi (ValueError)"]
+        fake(apps="41, /usr/local/lib/ollama/llama-server\n")  # a real row still parses
+        assert busy_reasons(save=False) == ["gpu process (ollama runner, <= 2 % for 0/10 min)"]
+        fake(body=b"{}")  # /api/ps without "models": not "nothing loaded"
+        assert busy_reasons(save=False) == ["probe failed: ollama /api/ps malformed"]
+        # astra2_13: malformed shapes are probe failures, never "nothing loaded" and never a crash
+        for junk in (b'{"models": {}}', b'{"models": [{"name": 5}]}', b'{"models": [{"model": "q"}]}',
+                     b'{"models": [{"name": ""}]}', b'{"models": ["x"]}', b'{"models": null}', b'[]',
+                     b'{"models": ' + b'[' * 10**6 + b']' * 10**6 + b'}'):  # deep nesting: RecursionError, not a crash
+            fake(body=junk)
+            assert busy_reasons(save=False) == ["probe failed: ollama /api/ps malformed"], (junk, busy_reasons(save=False))
+        fake(body=b'{"models": [{"name": "nomic-embed-text:latest", "model": "nomic-embed-text:latest"}]}')
+        assert busy_reasons(save=False) == []                                 # the resident embed model alone: idle
+        fake(body=b'{"models": [{"name": "qwen3:35b"}]}')
+        assert busy_reasons(save=False) == ["ollama model loaded"]
+        with tempfile.TemporaryDirectory() as d:  # main: a failed probe resets the idle counter, never advances it
+            STATE, DISABLE = Path(d), Path(d) / "disable"
+            COUNT, GPU_LOW = STATE / "idle-count", STATE / "gpu-low-since"
+            COUNT.write_text("3")  # <= 4 even if broken: never reaches the suspend path
+            fake(fail=("nvidia-smi",))
+            with contextlib.redirect_stdout(io.StringIO()) as o:
+                main([])
+            assert COUNT.read_text() == "0" and o.getvalue().startswith("busy: probe failed: nvidia-smi"), o.getvalue()
+            fake()
+            with contextlib.redirect_stdout(io.StringIO()) as o:
+                main([])
+            assert COUNT.read_text() == "1" and o.getvalue().startswith("idle 1/"), o.getvalue()
+            fake(body=b'{"models": {}}')  # astra2_13: a malformed /api/ps resets the counter like an exception
+            with contextlib.redirect_stdout(io.StringIO()) as o:
+                main([])
+            assert COUNT.read_text() == "0" and "probe failed: ollama /api/ps malformed" in o.getvalue(), o.getvalue()
+            COUNT.write_text("5")  # astra2_13 review: an exception escaping the probes resets the counter, never crashes
+            os.getloadavg = lambda: (_ for _ in ()).throw(OSError("loadavg"))
+            with contextlib.redirect_stdout(io.StringIO()) as o:
+                main([])
+            assert COUNT.read_text() == "0" and o.getvalue() == "busy: probe failed: OSError\n", o.getvalue()
+    finally:
+        subprocess.run, urllib.request.urlopen, os.getloadavg, (STATE, COUNT, GPU_LOW, DISABLE) = real
+
+
+def self_test():
+    with tempfile.TemporaryDirectory() as d:
+        low, run = Path(d) / "gpu-low-since", [("41", "/usr/local/lib/ollama/llama-server")] * 2  # one row per GPU
+        assert gpu_reasons([0, 1], run, low, 1000)[0].startswith("gpu process (ollama runner, <= 2 % for 0/10")
+        assert low.read_text() == "1000 41"
+        assert gpu_reasons([2, 0], run, low, 1599)[0].startswith("gpu process (ollama runner")  # 9m59s: busy
+        assert gpu_reasons([0, 0], run, low, 1600) == []                                       # 10 min low: idle
+        assert gpu_reasons([0, 0], run + [("7", "venv/bin/python")], low, 1600) == ["gpu process"]  # whisper: busy
+        assert gpu_reasons([0, 0], [("8", "[Not Found]")], low, 1600) == ["gpu process"]       # unknown: busy
+        assert gpu_reasons([0, 0], [("52", "/usr/bin/ollama")], low, 1700)[0].endswith("0/10 min)")  # reload: restart
+        assert low.read_text() == "1700 52"
+        assert gpu_reasons([0, 0], [], low, 1800) == [] and not low.exists()                   # no runner: clear
+        assert gpu_reasons([0, 0], run, low, 9000)[0].endswith("0/10 min)")  # new runner after an idle hour = mid-load
+        assert gpu_reasons([40, 0], run, low, 9100)[:1] == ["gpu busy"] and not low.exists()    # spike resets
+        assert gpu_reasons([0, 0], run, low, 1800, save=False)[0].endswith("0/10 min)") and not low.exists()
+        low.write_text("junk")
+        assert gpu_reasons([0, 0], run, low, 1900, save=False)[0].endswith("0/10 min)")         # bad state: fresh
+    self_test_probes()
+    assert isinstance(busy_reasons(save=False), list)
+    print("self-test passed"); return 0
+
+
+def main(argv):
+    if argv == ["--self-test"]:
+        return self_test()
+    dry = "--dry-run" in argv
+    if DISABLE.exists():
+        print("thor-sleep: disabled by /etc/thor-sleep.disable"); return 0
+    if not dry:
+        STATE.mkdir(parents=True, exist_ok=True)
+    n = int(COUNT.read_text() or 0) if COUNT.exists() else 0
+    try:  # a probe crash is a failed probe: busy, counter reset; a crash used to leave the counter as it was
+        reasons = busy_reasons(save=not dry)
+    except Exception as e:
+        reasons = [f"probe failed: {type(e).__name__}"]
+    if reasons:
+        if not dry:
+            COUNT.write_text("0")
+        print("busy: " + "; ".join(reasons)); return 0
+    n += 1
+    if not dry:  # ponytail: a dry run used to advance the real idle counter and could bring a suspend forward
+        COUNT.write_text(str(n))
+    if n < IDLE_CHECKS:
+        print(f"idle {n}/{IDLE_CHECKS}" + (" (dry run, not saved)" if dry else "")); return 0
+    if dry:
+        print("DRY RUN: would hold on heimdall and suspend"); return 0
+    COUNT.write_text("0")
+    hold = subprocess.run(["runuser", "-u", "you", "--", "ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5",
+                           "heimdall", "true"], capture_output=True, text=True, timeout=20)
+    if hold.returncode != 0:
+        print("fleet-wake hold failed; heimdall may wake thor early: " + hold.stderr.strip()[-200:])
+    time.sleep(2)
+    print("suspending after 60 min idle")
+    os.execvp("systemctl", ["systemctl", "suspend"])
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

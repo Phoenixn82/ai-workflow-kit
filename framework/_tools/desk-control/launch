@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+set -euo pipefail
+project_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+export PYTHONUTF8=1 PYTHONIOENCODING=utf-8
+if [[ ! -x "$project_dir/.venv/bin/python" ]]; then
+  echo "Desktop control is not installed. Run $project_dir/install. No actions taken." >&2
+  exit 1
+fi
+exec "$project_dir/.venv/bin/python" "$project_dir/computer.py" "$@"

@@ -1,0 +1,10 @@
+{
+  "matcher": "Bash|apply_patch|Edit|Write",
+  "hooks": [
+    {
+      "command": "bash __HOOK__",
+      "timeout": 5,
+      "type": "command"
+    }
+  ]
+}

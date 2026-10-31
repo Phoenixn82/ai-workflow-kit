@@ -1,0 +1,81 @@
+#!/bin/bash
+# fleet-triage: read-only compromise check, installed on every scanned host as /usr/local/sbin/fleet-triage
+# (root, mode 755). Linux only (Debian/Ubuntu or Arch). It changes nothing: it reads /proc, the account files,
+# authorized_keys, listening ports, cron, units, shell start files, kernel modules, Downloads and the package
+# checksums. heimdall's fleet-scan reaches it through a forced-command key, so its first argument is untrusted:
+# only "tar" (stream the Downloads folders for ClamAV on heimdall) is special, anything else runs the check.
+# Output is stable between runs so fleet-scan can diff it; lines starting "!! " are findings on their own.
+# Run it by hand to see what it reports: sudo fleet-triage | less
+# sudo rule for the ssh user fleet-scan logs in as (exactly this program, nothing else):
+#   echo "you ALL=(root) NOPASSWD: /usr/local/sbin/fleet-triage" | sudo tee /etc/sudoers.d/fleet-triage
+#   sudo chmod 440 /etc/sudoers.d/fleet-triage && sudo visudo -cf /etc/sudoers.d/fleet-triage
+# Bash and coreutils plus ss, lsmod/modinfo, findmnt and dpkg or pacman; no network.
+set -u
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+if [ "${1:-}" = tar ]; then
+  cd / && exec tar -cf - --one-file-system --ignore-failed-read home/*/Downloads 2>/dev/null
+fi
+
+echo "## procs"
+for p in /proc/[0-9]*; do
+  e=$(readlink "$p/exe" 2>/dev/null) || continue
+  case "$e" in
+    /usr/*|/opt/*) ;;  # deleted /usr binaries are normal after an upgrade
+    *"(deleted)"*|/tmp/*|/dev/shm/*|/var/tmp/*) echo "!! odd exe pid ${p#/proc/}: $e :: $(tr '\0' ' ' <"$p/cmdline" | cut -c1-120)";;
+  esac
+done
+ps -eo pid,user,args --no-headers | grep -iE 'xmrig|minerd|kdevtmpfsi|kinsing|cpuminer|stratum\+tcp|ethminer|nbminer|lolminer' | grep -v grep | sed 's/^/!! miner? /'
+a=$(ls -d /proc/[0-9]* | wc -l); b=$(ps -e --no-headers | wc -l)
+[ $((a - b)) -gt 5 ] && echo "!! hidden processes? /proc=$a ps=$b"
+[ -s /etc/ld.so.preload ] && sed 's/^/!! ld.so.preload: /' /etc/ld.so.preload
+
+echo "## users"
+awk -F: '$3==0{print "uid0 "$1}' /etc/passwd
+awk -F: '$7!~/(nologin|false|sync|halt|shutdown)$/{print "shell "$1" "$7}' /etc/passwd
+
+echo "## authorized_keys"
+for f in /root/.ssh/authorized_keys /home/*/.ssh/authorized_keys; do
+  [ -f "$f" ] && awk -v f="$f" 'NF && $1!~/^#/{print f" "$NF}' "$f"
+done | sort
+
+echo "## listening"
+ss -tulpnH | awk '$5!~/^(127\.|\[::1\]|::1)/' | grep -v tailscaled \
+  | awk '{print $1, $5, $7}' | sed -E 's/,pid=[0-9]+,fd=[0-9]+//g; s/users:\(\(//; s/\)\)//' | sort -u
+
+echo "## cron"
+for f in /etc/crontab /etc/cron.d/* /var/spool/cron/* /var/spool/cron/crontabs/*; do
+  [ -f "$f" ] && grep -vE '^\s*(#|$|SHELL|PATH|MAILTO)' "$f" | sed "s|^|$f: |"
+done 2>/dev/null | cut -c1-200
+
+echo "## units"
+find /etc/systemd/system /home/*/.config/systemd/user /root/.config/systemd/user -maxdepth 2 \
+  \( -name '*.service' -o -name '*.timer' -o -name '*.path' -o -name '*.socket' \) 2>/dev/null \
+  | grep -vE '\.bak|\.wants/|\.requires/' | sort
+
+echo "## shell init"
+grep -HnE 'curl .*\| *(ba)?sh|wget .*\| *(ba)?sh|base64 -d|/dev/tcp/|nc -e|python.*socket' \
+  /etc/profile /etc/profile.d/* /etc/bash.bashrc /etc/bashrc /root/.bashrc /root/.profile \
+  /home/*/.bashrc /home/*/.profile /home/*/.bash_profile /home/*/.zshrc 2>/dev/null | cut -c1-200 | sed 's/^/!! /'
+
+echo "## modules"
+for m in $(lsmod | awk 'NR>1{print $1}'); do
+  f=$(modinfo -F filename "$m" 2>/dev/null)
+  case "$f" in /lib/modules/*|/usr/lib/modules/*|"(builtin)") ;; *) echo "!! module outside /lib/modules: $m ${f:-no file}";; esac
+done
+
+echo "## disguised files"
+for d in /home/*/Downloads /srv/media /mnt/*; do
+  [ -d "$d" ] || continue
+  case "$(findmnt -n -o FSTYPE -T "$d")" in fuse*|nfs*|cifs|smb*|autofs|9p|virtiofs) continue;; esac  # each host scans its own disks
+  find "$d" -xdev -type f \( -iname '*.scr' -o -iname '*.hta' -o -iname '*.vbs' -o -iname '*.pif' \
+    -o -iregex '.*\.\(mp4\|mkv\|avi\|mp3\|pdf\|jpe?g\|png\|docx?\|txt\)\.\(exe\|scr\|bat\|cmd\|com\|lnk\|js\|vbs\|msi\|ps1\)' \) 2>/dev/null \
+    | head -20 | sed 's/^/!! disguised: /'
+done
+
+echo "## packages"
+if command -v pacman >/dev/null; then
+  pacman -Qkk 2>/dev/null | grep -E 'checksum mismatch' | grep -E '/(s?bin|lib|lib64)/' | head -20 | sed 's/^/!! /'
+elif command -v dpkg >/dev/null; then
+  dpkg --verify 2>/dev/null | awk '$2!="c"' | grep -E '/(s?bin|lib|lib64)/' | grep -v '^missing' | head -20 | sed 's/^/!! /'
+fi

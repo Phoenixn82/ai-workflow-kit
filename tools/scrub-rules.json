@@ -1,0 +1,13 @@
+{
+  "_comment": "TEMPLATE ruleset for the workflow kit privacy scrub. Put real maintainer-specific rules in the git-ignored tools/scrub-rules.local.json using this same shape; scrub.py loads that file automatically when present and falls back to this template otherwise. Never commit a real scrub-rules.local.json.",
+  "_version": "template-1",
+  "replacements": [
+    { "find": "Jane Example", "replace": "Example User", "isRegex": false, "caseSensitive": false, "note": "Illustrative fake identity replacement." }
+  ],
+  "allowlist": [
+    { "token": "example-public-project", "why": "Illustrative fake token that is safe to preserve." }
+  ],
+  "verifyDenylist": [
+    { "pattern": "(?i)jane[.]example@example[.]invalid", "label": "illustrative fake email residue" }
+  ]
+}

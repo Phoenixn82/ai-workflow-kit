@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# On loki: screenshot of the loki-desk VM ("Loki's screen"), saved on loki. Prints the path.
+# Pixel coordinates match desk-gui (xdotool on the VM's :0).
+set -euo pipefail
+out=${1:-$HOME/hermes-work/shots/desk-$(date +%Y%m%d-%H%M%S).png}
+mkdir -p "$(dirname "$out")"
+ssh loki-desk 'DISPLAY=:0 xwd -root -silent' | magick xwd:- "$out"
+echo "$out"

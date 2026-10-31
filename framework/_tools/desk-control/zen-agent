@@ -1,0 +1,171 @@
+#!/usr/bin/env bash
+# zen-agent — a separate Zen instance for agent automation, isolated from the user's own Zen.
+#   on      start the agent instance (own profile, Marionette + WebDriver BiDi) so the
+#           firefox-devtools MCP can attach. The user's personal Zen is never touched.
+#   off     close the agent instance
+#   login   open the agent profile WITHOUT automation so the user can sign in to sites the
+#           agent needs (sign-in pages often refuse automated browsers); logins persist
+#   status  report both instances
+# Why separate: Marionette sets navigator.webdriver (captchas fail) and the remote agent
+# rewrites prefs that leak on an unclean exit — neither may reach the personal profile.
+set -euo pipefail
+umask 077
+
+MARIONETTE_PORT=2828
+AGENT_PROFILE="$HOME/.config/zen/agent-automation"
+AGENT_APP_ID="zen-agent"   # Wayland app_id, so the agent window is distinguishable
+AGENT_PIDFILE="$AGENT_PROFILE/zen.pid"
+AGENT_LOCKFILE="$AGENT_PROFILE/zen-agent.lock"
+AGENT_MODEFILE="$AGENT_PROFILE/zen.mode"
+
+# The PID file is written only by start_agent. Validate it against the process rather than matching a profile
+# substring in every process list, so `off` cannot signal an unrelated same-user process.
+agent_pid() {
+  local pid comm args
+  [ -r "$AGENT_PIDFILE" ] || return 0
+  read -r pid < "$AGENT_PIDFILE" || return 0
+  [[ "$pid" =~ ^[1-9][0-9]*$ ]] || return 0
+  comm=$(ps -p "$pid" -o comm= 2>/dev/null | tr -d '[:space:]')
+  args=$(ps -p "$pid" -o args= 2>/dev/null || true)
+  if [ "$comm" = zen ] && [[ " $args " == *" --profile $AGENT_PROFILE "* ]] && [[ "$args" != *-contentproc* ]]; then
+    printf '%s\n' "$pid"
+  fi
+}
+
+clear_stale_pidfile() { [ -n "$(agent_pid)" ] || rm -f -- "$AGENT_PIDFILE"; }
+agent_mode() { [ -r "$AGENT_MODEFILE" ] && { read -r mode < "$AGENT_MODEFILE"; case "$mode" in automated|login) printf '%s\n' "$mode";; esac; }; }
+
+personal_pids() {
+  local agent; agent=$(agent_pid)
+  # Content processes use the same executable name, but are never an interactive personal window.
+  ps -eo pid=,comm=,args= | awk -v a="$agent" \
+    '$1 != a && $0 !~ /-contentproc/ && ($2 == "zen" || $0 ~ /\/zen-browser\/zen([[:space:]]|$)/) { print $1 }'
+}
+port_owner() { ss -ltnpH "sport = :${MARIONETTE_PORT}" 2>/dev/null | grep -o 'pid=[0-9]*' | head -1 | cut -d= -f2 || true; }
+agent_on() { local a; a=$(agent_pid); [ -n "$a" ] && [ "$(port_owner)" = "$a" ]; }
+
+prepare_profile() {
+  install -d -m 0700 "$AGENT_PROFILE"
+  chmod 0700 "$AGENT_PROFILE"
+  # No agent process is running here, so any lock is stale. Firefox keys its lock to the
+  # host's IP, which changes on this box, so it would otherwise refuse to open the profile.
+  rm -f "$AGENT_PROFILE/lock"
+  cat > "$AGENT_PROFILE/user.js" <<'EOF'
+// Managed by zen-agent; rewritten on every launch.
+// Keep the remote agent from rewriting ~100 prefs for automation (they persist on an unclean exit).
+user_pref("remote.prefs.recommended", false);
+user_pref("browser.shell.checkDefaultBrowser", false);
+user_pref("zen.welcome-screen.seen", true);
+user_pref("startup.homepage_welcome_url", "");
+user_pref("startup.homepage_welcome_url.additional", "");
+user_pref("browser.startup.homepage_override.mstone", "ignore");
+// Fast on/off cycles count as startup crashes; after 3 an invisible Safe Mode modal blocks Marionette.
+user_pref("toolkit.startup.max_resumed_crashes", -1);
+EOF
+  chmod 0600 "$AGENT_PROFILE/user.js"
+}
+
+stop_agent() {
+  local pid; pid=$(agent_pid)
+  [ -n "$pid" ] || { clear_stale_pidfile; return 0; }
+  kill -TERM "$pid" 2>/dev/null || true
+  for _ in $(seq 1 50); do
+    if [ -z "$(agent_pid)" ]; then rm -f -- "$AGENT_PIDFILE"; return 0; fi
+    sleep 0.2
+  done
+  echo "zen-agent: agent instance (pid $pid) did not exit within 10s; close its window and retry" >&2
+  exit 1
+}
+
+start_agent() {
+  local mode=$1
+  shift
+  prepare_profile
+  # --no-remote: a second instance beside the personal one, which also never receives
+  # links opened from other apps.
+  clear_stale_pidfile
+  setsid zen --name "$AGENT_APP_ID" --no-remote --profile "$AGENT_PROFILE" "$@" >/dev/null 2>&1 </dev/null &
+  printf '%s\n' "$!" > "$AGENT_PIDFILE"
+  chmod 0600 "$AGENT_PIDFILE"
+  printf '%s\n' "$mode" > "$AGENT_MODEFILE"
+  chmod 0600 "$AGENT_MODEFILE"
+}
+
+wait_for_agent() {
+  # A PID can appear while Zen is still failing startup. Require it to survive five polls; for login mode,
+  # also prove that no process owns the automation port.
+  local mode=$1 stable=0 pid owner
+  for _ in $(seq 1 75); do
+    pid=$(agent_pid)
+    owner=$(port_owner)
+    if [ -n "$pid" ] && { [ "$mode" = automated ] && [ "$owner" = "$pid" ] || [ "$mode" = login ] && [ -z "$owner" ]; }; then
+      stable=$((stable + 1))
+      [ "$stable" -ge 5 ] && return 0
+    else
+      stable=0
+    fi
+    sleep 0.2
+  done
+  return 1
+}
+
+if [ "${BASH_SOURCE[0]}" != "$0" ]; then
+  return 0
+fi
+
+# Serialize on/off/login/status so an overlapping invocation cannot replace the tracked PID mid-lifecycle.
+install -d -m 0700 "$AGENT_PROFILE"
+chmod 0700 "$AGENT_PROFILE"
+: > "$AGENT_LOCKFILE"
+chmod 0600 "$AGENT_LOCKFILE"
+exec 9> "$AGENT_LOCKFILE"
+if ! flock -n 9; then
+  echo "zen-agent: another lifecycle operation is in progress; retry shortly" >&2
+  exit 1
+fi
+
+case "${1:-status}" in
+  on)
+    if agent_on; then echo "agent instance already on (Marionette :$MARIONETTE_PORT)"; exit 0; fi
+    owner=$(port_owner)
+    if [ -n "$owner" ] && [ "$owner" != "$(agent_pid)" ]; then
+      echo "zen-agent: port $MARIONETTE_PORT is held by pid $owner, not the agent instance." >&2
+      echo "  If that is your personal Zen left in agent mode, quit it and reopen it normally." >&2
+      exit 1
+    fi
+    stop_agent   # an agent window open in login mode has no Marionette; restart it with it
+    start_agent automated --marionette --remote-debugging-port
+    if wait_for_agent automated; then
+      echo "agent instance on (Marionette :$MARIONETTE_PORT, profile $AGENT_PROFILE)"
+      exit 0
+    fi
+    echo "zen-agent: agent instance started but Marionette is not listening on :$MARIONETTE_PORT" >&2
+    exit 1
+    ;;
+  off)
+    if [ -z "$(agent_pid)" ]; then echo "agent instance not running"; exit 0; fi
+    stop_agent
+    echo "agent instance closed"
+    ;;
+  login)
+    stop_agent
+    start_agent login
+    if wait_for_agent login; then
+      echo "agent profile open for sign-in (no automation). Close it, or run 'zen-agent on', when done."
+      exit 0
+    fi
+    clear_stale_pidfile
+    echo "zen-agent: agent instance did not start for sign-in" >&2
+    exit 1
+    ;;
+  status)
+    p=$(personal_pids | tr '\n' ' ')
+    if [ -n "$p" ]; then echo "personal Zen: running (pid ${p% })"; else echo "personal Zen: not running"; fi
+    a=$(agent_pid)
+    if [ -z "$a" ]; then echo "agent instance: off"
+    elif agent_on; then echo "agent instance: ON (pid $a, Marionette :$MARIONETTE_PORT)"
+    elif [ "$(agent_mode)" = login ] && [ -z "$(port_owner)" ]; then echo "agent instance: open for sign-in, no automation (pid $a)"
+    else echo "agent instance: state unverified (pid $a); run zen-agent off, then on or login"; fi
+    ;;
+  *) echo "usage: zen-agent on|off|login|status" >&2; exit 2 ;;
+esac

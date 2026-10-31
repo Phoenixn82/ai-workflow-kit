@@ -1,0 +1,8 @@
+# One site block per public project: its domain, then its loopback port (APP_PORT in ~/apps/<name>/.env).
+# Caddy fetches and renews the certificate. Check after editing:
+#   docker compose -f ~/apps/caddy/compose.yaml exec app caddy validate --config /etc/caddy/Caddyfile
+#   then: systemctl --user restart app@caddy
+myapp.example.com {
+	encode zstd gzip
+	reverse_proxy 127.0.0.1:8081
+}

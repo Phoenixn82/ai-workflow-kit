@@ -1,0 +1,29 @@
+# One project on heimdall (profiles/heimdall/README.md "Deploy a project"). deploy.sh copies this folder to
+# ~/apps/<name>/ once and never overwrites it again: from then on the copy is yours (edit it, add services, or put
+# changes in a compose.override.yaml next to it). The rules it keeps:
+#   - ports bind to 127.0.0.1 only; tailscale serve (tailnet) or Caddy (public) publishes them
+#   - everything the project needs to come back lives in this folder: compose files, .env, ./data
+#     (that is what backup.sh saves and restore.sh puts back)
+#   - secrets go in .env (mode 600), never in this file or in git
+#   - no restart policy here: app@<name>.service (systemd) starts, restarts and stops the project; two
+#     supervisors fight over it
+#   - every service keeps running: the unit stops the whole project when any container exits, so a one-shot
+#     job (a migration) is not a service here; run it with: docker compose run --rm app <command>
+#   - logs capped at 3 x 10 MB per container
+name: ${APP_NAME:?set APP_NAME in .env}
+services:
+  app:
+    image: ${APP_IMAGE:?set APP_IMAGE in .env}
+    # build: ./src                     # instead of image:, to build your own code (put it in ~/apps/<name>/src)
+    env_file: [.env]                   # the app's own settings (DATABASE_URL=..., API keys) go in .env too
+    ports:
+      - "127.0.0.1:${APP_PORT:?set APP_PORT in .env}:${APP_INTERNAL_PORT:-8080}"
+    volumes:
+      - ./data:/data                   # point the app's data, uploads or SQLite file here
+    restart: "no"
+    stop_grace_period: 30s
+    logging:
+      driver: local
+      options:
+        max-size: "10m"
+        max-file: "3"

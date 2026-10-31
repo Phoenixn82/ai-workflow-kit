@@ -1,0 +1,31 @@
+#!/bin/sh
+# alert MESSAGE  -- send one short notification to your phone. Never fails the caller.
+# Config: /etc/homeserver/alert.conf (mode 640, root and your group), shell KEY=VALUE lines. Fill in one or both:
+#   NTFY_URL=https://ntfy.sh/your-long-random-topic      (or http://heimdall:8090/your-topic for self-hosted ntfy;
+#                                                         heimdall's ntfy listens on 127.0.0.1, `tailscale serve` shares it)
+#   NTFY_TOKEN=tk_...                                     (optional, for a protected ntfy topic)
+#   TELEGRAM_TOKEN=123456:ABC...                          (optional, a bot from @BotFather)
+#   TELEGRAM_CHAT=123456789
+# Secrets go to curl on stdin (-K -) so they never show in the process list.
+# With no config the message only goes to the system log (logger -t alert).
+msg="${1:?usage: alert MESSAGE}"
+conf="${ALERT_CONF:-/etc/homeserver/alert.conf}"
+[ -r "$conf" ] && . "$conf"
+logger -t alert -- "$msg" 2>/dev/null || true
+sent=0
+if [ -n "${NTFY_URL:-}" ]; then
+  if [ -n "${NTFY_TOKEN:-}" ]; then
+    printf 'header = "Authorization: Bearer %s"\n' "$NTFY_TOKEN" |
+      curl -sf -m 15 -o /dev/null -K - -d "$msg" "$NTFY_URL" && sent=1
+  else
+    curl -sf -m 15 -o /dev/null -d "$msg" "$NTFY_URL" && sent=1
+  fi
+fi
+if [ -n "${TELEGRAM_TOKEN:-}" ] && [ -n "${TELEGRAM_CHAT:-}" ]; then
+  printf 'url = "https://api.telegram.org/bot%s/sendMessage"\n' "$TELEGRAM_TOKEN" |
+    curl -sf -m 15 -o /dev/null -K - --data-urlencode chat_id="$TELEGRAM_CHAT" --data-urlencode text="$msg" && sent=1
+fi
+if [ "$sent" = 0 ] && { [ -n "${NTFY_URL:-}" ] || [ -n "${TELEGRAM_TOKEN:-}" ]; }; then
+  logger -t alert -- "send failed: $msg" 2>/dev/null || true
+fi
+exit 0

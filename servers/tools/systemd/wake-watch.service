@@ -1,0 +1,15 @@
+[Unit]
+Description=Wake an unexpectedly offline box once (Wake-on-LAN)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/wake-watch check
+# setup.sh adds User=<your admin user> in a drop-in, so `wake-watch hold` over SSH can write the state
+StateDirectory=wake-watch
+Environment=WAKE_WATCH_STATE=/var/lib/wake-watch
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=yes

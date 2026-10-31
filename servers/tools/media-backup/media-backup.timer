@@ -1,0 +1,12 @@
+[Unit]
+Description=Nightly media-backup at 03:40 (wakes the box from suspend)
+
+[Timer]
+OnCalendar=*-*-* 03:40
+RandomizedDelaySec=5min
+Persistent=true
+# thor sleeps when idle: wake it for the run (needs a working RTC wake alarm; Persistent catches up otherwise)
+WakeSystem=true
+
+[Install]
+WantedBy=timers.target

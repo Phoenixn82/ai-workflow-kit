@@ -1,0 +1,5 @@
+[Unit]
+Description=Suspend thor after 60 min with no real work
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/thor-sleep

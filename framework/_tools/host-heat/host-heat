@@ -1,0 +1,532 @@
+#!/usr/bin/env python3
+"""host-heat: per-host heat watch for the laptops (thor-heat, generalised). One file, stdlib only.
+  host-heat            print every temperature and fan speed now, with levels
+  host-heat --json     the same, machine readable (fleet-heat on odin reads this over ssh)
+  host-heat --status   readings + level + mitigation + recent actions + timer state
+  host-heat --check    (systemd timer, every minute) append a CSV row; levels OK/WARN/HOT/EMERG;
+                       HOT: reduce heat (turbo off, max frequency 50%, power-saver profile where
+                       power-profiles-daemon exists, dGPU clocks low where amdgpu). No service is ever
+                       stopped or paused. (No platform_profile knob: on some laptop firmware a
+                       write leaves the file unreadable, so it is not touched.)
+                       Undone after RESTORE_MIN consecutive OK checks. Clean shutdown if HOT lasts
+                       hot_min minutes or EMERG holds EMERG_MIN checks (the cooling has failed).
+  host-heat --apply    apply the HOT mitigation now (manual);   --resume  undo it now
+  host-heat --test     queue a test message: fleet-heat on odin sends it through thor
+  --dry-run            with --check/--apply/--resume: print what would be done, change nothing
+                       (separate state file; the CSV row is still written, except with --fake)
+  --fake cpu=98,nvme0=70    inject temperatures (sensor key or kind)
+  --set cpu=90,95,100 --set hot_min=0    override a sensor's limits or a timing (validated: limits ascending
+                       in 20..150 C, timings 0..240; 0 only with --dry-run)
+  --fake/--set with an action are refused unless --dry-run, so they can never trigger a real action;
+  --really lets --set (never --fake) through for a real run with those limits.
+  --self-test          check the argument guard and parsing, change nothing
+There is no Telegram here: the bot token lives only on thor; fleet-heat (odin) sends the messages.
+Stop: sudo systemctl disable --now host-heat.timer; HALT: touch /etc/host-heat/HALT (no actions,
+mitigation undone, recording continues)."""
+import csv
+import glob
+import json
+import os
+import pwd
+import re
+import shutil
+import signal
+import socket
+import subprocess
+import sys
+import time
+from datetime import datetime
+
+NAMES = ["OK", "WARN", "HOT", "EMERG"]
+for _l in (open("/etc/host-heat/env").read().splitlines() if os.path.exists("/etc/host-heat/env") else []):
+    _k, _, _v = _l.partition("=")  # KEY=VALUE lines written by install.sh (CSV dir, owner, extra HALT file)
+    if _k.strip() and not _k.startswith("#"):
+        os.environ.setdefault(_k.strip(), _v.strip())
+HOST = socket.gethostname().split(".")[0].lower()
+STATE_DIR = os.environ.get("HOST_HEAT_STATE", "/var/lib/host-heat")
+CSV_DIR = os.environ.get("HOST_HEAT_DIR") or os.path.expanduser("~/.local/state/host-heat")
+OWNER = os.environ.get("HOST_HEAT_USER")  # the CSV is written as this user (the timer runs as root)
+HALT_FILES = ["/etc/host-heat/HALT"] + ([os.environ["HOST_HEAT_HALT"]] if os.environ.get("HOST_HEAT_HALT") else [])
+KEEP_DAYS = 90
+CSV_WAIT = 10    # seconds the CSV writer (dropped to HOST_HEAT_USER) may take before it is killed
+HYST = 3          # a level only drops once the sensor is this far below the limit
+EMERG_MIN = 3     # consecutive EMERG checks before a clean shutdown
+RESTORE_MIN = 5   # consecutive OK checks before the mitigation is undone
+
+# cpu: (warn, hot) offsets below the package's own crit = Tjmax (coretemp temp1_crit, usually 100 C);
+# EMERG = Tjmax itself. hot_min: minutes of HOT (after mitigation) before a clean shutdown.
+HOSTS = {"odin": dict(cpu=(10, 5), hot_min=15),     # cockpit laptop: laptop firmware often throttles a few C below Tjmax and holds there, so HOT sits there too
+         "heimdall": dict(cpu=(10, 5), hot_min=30),  # always-on services box: slowest to give up
+         "loki": dict(cpu=(10, 5), hot_min=20),      # media box: headless, lid often closed
+         "raven": dict(cpu=(5, 1), hot_min=15)}      # thin-client laptop: tighter offsets
+H = HOSTS.get(HOST, dict(cpu=(10, 5), hot_min=30))
+# fallbacks when the drive/chip reports no limits of its own: (warn, hot, emerg)
+DEFAULT = {"nvme": (70, 78, 85), "ssd": (60, 67, 72), "gpu": (90, 95, 100), "batt": (45, 50, 60),
+           "ram": (72, 78, 85)}  # jc42 SO-DIMM sensor; DDR4 normal range ends at 85
+TUNE = {"hot_min": H["hot_min"], "emerg_min": EMERG_MIN, "restore_min": RESTORE_MIN}
+PSTATE = "/sys/devices/system/cpu/intel_pstate"
+
+
+def rd(p):
+    try:
+        return open(p).read().strip()
+    except OSError:
+        return None
+
+
+def num(p):  # milli-degrees file -> deg C
+    try:
+        return int(rd(p)) / 1000
+    except (TypeError, ValueError):
+        return None
+
+
+def run(cmd, t=10):
+    try:
+        return subprocess.run(cmd, capture_output=True, text=True, timeout=t).stdout
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+
+
+def level(t, lim):
+    warn, hot, emerg = lim
+    return 3 if emerg and t >= emerg else 2 if t >= hot else 1 if t >= warn else 0
+
+
+def settle(prev, last_raw, t, lim):
+    """New level of one sensor: up only after two samples agree, down only HYST degrees below the limit."""
+    raw = level(t, lim)
+    up, down = min(raw, last_raw), level(t + HYST, lim)
+    return (up if up > prev else down if down < prev else prev), raw
+
+
+def from_hw(mx, crit, kind):
+    """The drive's own warning/critical temperature (hwmon max/crit), never above the kind's default
+    (some SATA SSDs report a max far above their spec limit)."""
+    if mx and mx > 30:
+        return tuple(min(a, b) for a, b in zip((round(mx - 10), round(mx - 3), round(crit or mx + 1)), DEFAULT[kind]))
+    return DEFAULT[kind]
+
+
+def slug(s):
+    return re.sub(r"[^a-z0-9]+", "_", s.lower()).strip("_")
+
+
+def sensors(fake=None):
+    """-> (sensors, fans). Sensor: key, name, kind, t, lim (warn, hot, emerg|None) or None = record only."""
+    out, fans, nv, ns = [], {}, 0, 0
+
+    def add(key, name, kind, t, lim=None):
+        if t is not None and -20 < t < 150:
+            base, i = key, 1
+            while any(o["key"] == key for o in out):
+                i += 1
+                key = f"{base}_{i}"
+            out.append({"key": key, "name": name, "kind": kind, "t": round(t, 1), "lim": lim})
+
+    model = ""
+    for line in (rd("/proc/cpuinfo") or "").splitlines():
+        if line.startswith("model name"):
+            model = (re.search(r"i[3579]-\w+", line) or re.search(r": (.*)", line)).group(0).lstrip(": ")
+            break
+    for h in sorted(glob.glob("/sys/class/hwmon/hwmon*"), key=lambda h: (os.path.realpath(h + "/device"), h)):
+        chip = rd(h + "/name") or ""
+        if not chip or chip.startswith(("ucsi", "AC", "ADP", "hidpp")):
+            continue
+        for f in glob.glob(h + "/fan*_input"):
+            rpm = int(rd(f) or 0)
+            if chip != "amdgpu":  # on a T2 MacBook the firmware runs the dGPU fan, so it reads 0
+                n = os.path.basename(f)[:-6]
+                fans["fan_" + slug(rd(f"{h}/{n}_label") or chip + n)] = rpm
+        for n in sorted({int(m.group(1)) for f in glob.glob(h + "/temp*_input") if (m := re.search(r"temp(\d+)_", f))}):
+            b = f"{h}/temp{n}"
+            t, lab, mx, cr = num(b + "_input"), rd(b + "_label") or "", num(b + "_max"), num(b + "_crit")
+            if chip == "coretemp":
+                if lab == "Package id 0" and cr:
+                    add("cpu", "CPU " + model, "cpu", t, (round(cr - H["cpu"][0]), round(cr - H["cpu"][1]), round(cr)))
+            elif chip == "nvme":
+                if lab == "Composite":
+                    add(f"nvme{nv}", rd(h + "/device/model") or "NVMe", "nvme", t, from_hw(mx, cr, "nvme"))
+                    nv += 1
+            elif chip == "drivetemp":
+                add(f"ssd{ns}", rd(h + "/device/model") or "SATA drive", "ssd", t, from_hw(mx, cr, "ssd"))
+                ns += 1
+            elif chip == "amdgpu":
+                if lab == "junction" and cr:
+                    add("gpu", "GPU junction (Radeon)", "gpu", t, (round(cr - 10), round(cr - 5), round(cr)))
+                elif lab == "edge":
+                    add("gpu_edge", "GPU edge", "info", t)
+            elif chip == "jc42":
+                add("jc42", "RAM (SO-DIMM)", "ram", t, DEFAULT["ram"])
+            elif chip.startswith("BAT"):
+                add("batt", "Battery", "batt", t, DEFAULT["batt"])
+            else:  # everything else is only recorded
+                add(slug(chip) + ("" if n == 1 else f".{n}"), chip, "info", t)
+    asleep = [rd(f) for f in glob.glob("/sys/bus/pci/drivers/nvidia/0000:*/power/runtime_status")]
+    for line in ([] if asleep and all(a == "suspended" for a in asleep) else  # polling a suspended dGPU would wake it
+                 run(["nvidia-smi", "--query-gpu=name,temperature.gpu", "--format=csv,noheader,nounits"]).splitlines()):
+        name, _, t = line.rpartition(",")
+        try:
+            temperature = float(t)
+        except ValueError:  # NVIDIA can report "[GPU requires reset]" instead of a temperature
+            continue
+        add("gpu", name.replace("NVIDIA GeForce ", "").strip(), "gpu", temperature, DEFAULT["gpu"])  # slowdown 97, shutdown 100
+    for z in sorted(glob.glob("/sys/class/thermal/thermal_zone*")):  # Dell/HP firmware zones with real trip points
+        ty = rd(z + "/type") or ""
+        t = num(z + "/temp")
+        if not re.fullmatch(r"TSKN|NGFF|TMEM|SEN\d", ty) or t is None or t < 1:
+            continue
+        trip = {}
+        for tf in glob.glob(z + "/trip_point_*_temp"):
+            v = num(tf)
+            if v and v > 0:
+                trip.setdefault(rd(tf[:-5] + "_type"), []).append(v)
+        ps, ht = min(trip.get("passive", [0]) or [0]), min(trip.get("hot", [0]) or [0])
+        if ps or ht:
+            add(ty.lower(), "board " + ty, "zone", t, (round(ps or ht - 10), round(ht or ps + 8), None))
+    if fake:
+        for s in out:
+            for k in (s["key"], s["kind"]):
+                if k in fake:
+                    s["t"] = fake[k]
+                    break
+    return out, fans
+
+
+def rank(r):
+    return [s for s in r if s["lim"]]
+
+
+def readout(r, fans, lv=None):
+    lv = lv or {}
+    lines = [f"{NAMES[lv.get(s['key'], level(s['t'], s['lim']))]:5} {s['t']:5.1f}C  {s['name']}"
+             for s in sorted(rank(r), key=lambda s: -s["t"])]
+    other = ", ".join(f"{s['key']} {s['t']:.0f}C" for s in r if not s["lim"])
+    return "\n".join(lines + ([f"also: {other}"] if other else []) +
+                     ([f"Fans: {', '.join(f'{k[4:]} {v}rpm' for k, v in fans.items())}"] if fans else []))
+
+
+# --- mitigation: every knob is (key, label, getter, setter, value while HOT) ---
+def sysfs_knob(path, label, val):
+    def put(v):
+        with open(path, "w") as f:
+            f.write(str(v))
+    return (path, label, lambda: rd(path), put, val)
+
+
+def knobs():
+    k = []
+    if os.path.exists(PSTATE + "/no_turbo"):
+        k += [sysfs_knob(PSTATE + "/no_turbo", "turbo off", "1"),
+              sysfs_knob(PSTATE + "/max_perf_pct", "max CPU frequency 50%", "50")]
+    if shutil.which("powerprofilesctl"):
+        k.append(("ppd", "power-saver", lambda: run(["powerprofilesctl", "get"]).strip() or None,
+                  lambda v: run(["powerprofilesctl", "set", v]), "power-saver"))
+    for p in glob.glob("/sys/class/drm/card*/device/power_dpm_force_performance_level"):  # amdgpu only
+        k.append(sysfs_knob(p, "dGPU clocks low", "low"))
+    return k
+
+
+def apply(mit, dry):
+    """Idempotent (re-applied every minute while HOT). Returns the labels changed this time."""
+    done = []
+    for key, label, get, put, val in knobs():
+        cur = get()
+        if cur is None or cur == val:
+            continue
+        mit["orig"].setdefault(key, cur)
+        if not dry:
+            try:
+                put(val)
+            except OSError as e:
+                done.append(f"{label} FAILED ({e.strerror})")
+                continue
+        mit["set"][key] = val
+        done.append(f"{label} (was {cur})")
+    return done
+
+
+def restore(mit, dry):
+    done = []
+    for key, label, get, put, val in knobs():
+        if key in mit.get("orig", {}) and (dry or get() == mit["set"].get(key)):  # changed by someone since: leave it
+            if not dry:
+                try:
+                    put(mit["orig"][key])
+                except OSError:
+                    continue
+            done.append(f"{os.path.basename(key)}={mit['orig'][key]}")
+    return done
+
+
+# --- state, CSV ---
+def state_path(dry):
+    return f"{STATE_DIR}/state{'.dry' if dry else ''}.json"
+
+
+def load(dry):
+    try:
+        return json.load(open(state_path(dry)))
+    except (OSError, ValueError):
+        return {}
+
+
+def save(st, dry):
+    os.makedirs(STATE_DIR, exist_ok=True)
+    os.chmod(STATE_DIR, 0o755)
+    tmp = state_path(dry) + ".tmp"
+    json.dump(st, open(tmp, "w"))
+    os.chmod(tmp, 0o644)
+    os.replace(tmp, state_path(dry))
+
+
+def as_owner(fn, *a):
+    """Run fn(*a) as OWNER when root: the CSV lives in that user's home, and root must never write there itself.
+    audit 2026-10-13 S1: root's makedirs/chown/append/prune followed a ~/.local/state/host-heat swapped for a
+    symlink to /etc. The child drops to the user, so any symlink reaches only what the user could already write.
+    A failure is logged, never raised, and a writer stuck for CSV_WAIT s (a FIFO planted as the month file, or a child
+    the user SIGSTOPs: it runs as the user, so the user may signal it) is killed: the shutdown decision must still run."""
+    if os.geteuid() != 0 or not OWNER:
+        return fn(*a)
+    try:
+        pw = pwd.getpwnam(OWNER)
+    except KeyError:
+        print(f"host-heat: CSV not written: no user {OWNER}", file=sys.stderr)
+        return
+    sys.stdout.flush()
+    pid = os.fork()
+    if pid == 0:
+        code = 1
+        try:
+            os.initgroups(OWNER, pw.pw_gid)
+            os.setgid(pw.pw_gid)
+            os.setuid(pw.pw_uid)
+            fn(*a)
+            code = 0
+        except BaseException as e:
+            print(f"host-heat: CSV not written: {e}", file=sys.stderr, flush=True)
+        finally:
+            os._exit(code)
+    end = time.monotonic() + CSV_WAIT
+    while not os.waitpid(pid, os.WNOHANG)[0]:
+        if time.monotonic() > end:
+            os.kill(pid, signal.SIGKILL)  # not reaped: a zombie until this short-lived run exits
+            print(f"host-heat: CSV not written: the writer took over {CSV_WAIT} s and was killed", file=sys.stderr)
+            return
+        time.sleep(0.02)
+
+
+def write_csv(now, lvl, r, fans, mit):
+    os.makedirs(CSV_DIR, exist_ok=True)
+    path = f"{CSV_DIR}/{time.strftime('%Y-%m', time.localtime(now))}.csv"
+    vals = {"ts": datetime.fromtimestamp(now).astimezone().isoformat(timespec="seconds"), "level": NAMES[lvl],
+            "load1": round(os.getloadavg()[0], 2), "mit": int(bool(mit.get("active"))),
+            **{s["key"]: s["t"] for s in r}, **fans}
+    cols = ["ts", "level"] + [s["key"] for s in r] + list(fans) + ["load1", "mit"]
+    if os.path.exists(path):
+        old = rd(path).split("\n", 1)[0].split(",")
+        if set(cols) <= set(old):  # a sensor may be missing (a sleeping dGPU): its cell stays empty
+            cols = old
+        else:  # a sensor is new: keep the old file, start a new one with the wider header
+            os.replace(path, f"{path}.{int(now)}")
+    new = not os.path.exists(path)
+    with open(path, "a", newline="") as f:
+        w = csv.writer(f, lineterminator="\n")
+        if new:
+            w.writerow(cols)
+        w.writerow([vals.get(c, "") for c in cols])
+    for old in glob.glob(f"{CSV_DIR}/*.csv*"):
+        if now - os.path.getmtime(old) > KEEP_DAYS * 86400:
+            os.remove(old)
+
+
+def halted():
+    return next((p for p in HALT_FILES if os.path.exists(p)), None)
+
+
+def check(dry, fake, over):
+    now = time.time()
+    st = load(dry)
+    if now - st.get("last", 0) > 300:  # timer was not running (boot, resume): forget the old streaks
+        st.update(hot_since=None, emerg_n=0, ok_n=0)
+    r, fans = sensors(fake)
+    for s in r:
+        if s["key"] in over and s["lim"]:
+            s["lim"] = over[s["key"]]
+    sens, ev = st.setdefault("sens", {}), st.setdefault("events", [])
+    for s in rank(r):
+        p = sens.get(s["key"], {"lvl": 0, "raw": 0})
+        s["lvl"], raw = settle(p["lvl"], p["raw"], s["t"], s["lim"])
+        sens[s["key"]] = {"lvl": s["lvl"], "raw": raw}
+    lvl = max((s["lvl"] for s in rank(r)), default=0)
+    worst = max(rank(r), key=lambda s: (s["lvl"], s["t"]), default=None)
+    prev, mit = st.get("level", 0), st.setdefault("mit", {"active": False, "orig": {}, "set": {}})
+    tag = "[dry-run] " if dry else ""
+
+    def event(kind, text):
+        ev.append([int(now), kind, tag + text])
+        del ev[:-10]
+        print(("DRY-RUN: " if dry else "host-heat: ") + text, file=sys.stderr)  # log lines; stdout stays clean for --json
+
+    if lvl != prev and worst:
+        event("level", f"{NAMES[prev]} -> {NAMES[lvl]} ({worst['name']} {worst['t']:.0f}C)")
+    st["ok_n"] = st.get("ok_n", 0) + 1 if lvl == 0 else 0
+    st["emerg_n"] = st.get("emerg_n", 0) + 1 if lvl == 3 else 0
+    st["hot_since"] = (st.get("hot_since") or now) if lvl >= 2 else None
+    stop = halted()
+    why = None
+    if stop:
+        if mit["active"]:
+            event("act", f"HALT file {stop}: mitigation undone ({', '.join(restore(mit, dry)) or 'nothing to undo'})")
+            mit.update(active=False, orig={}, set={})
+    else:
+        if lvl >= 2:
+            done = apply(mit, dry)
+            if done and not mit["active"]:
+                event("act", "cooling: " + ", ".join(done))
+            if not mit["active"]:
+                mit.update(active=True, since=int(now))
+        elif mit["active"] and st["ok_n"] >= TUNE["restore_min"]:
+            event("act", f"{TUNE['restore_min']:.0f} min OK, cooling undone: " + (", ".join(restore(mit, dry)) or "nothing to undo"))
+            mit.update(active=False, orig={}, set={})
+        if st["emerg_n"] >= TUNE["emerg_min"] and worst:
+            why = f"{worst['name']} at {worst['t']:.0f}C, EMERG for {st['emerg_n']} checks"
+        elif st["hot_since"] and now - st["hot_since"] >= TUNE["hot_min"] * 60:
+            why = f"HOT for {TUNE['hot_min']:.0f} min even with cooling applied ({worst['name']} {worst['t']:.0f}C)"
+    st.update(level=lvl, last=int(now))
+    if not fake:  # injected temperatures never reach the record
+        as_owner(write_csv, now, lvl, r, fans, mit)  # as HOST_HEAT_USER, never as root
+    if why:
+        event("act", f"SHUTTING DOWN: {why}")
+    save(st, dry)
+    if why:
+        if dry:
+            print("DRY-RUN: would run: systemctl poweroff", file=sys.stderr)
+        else:
+            subprocess.run(["systemctl", "poweroff"])
+    return r, fans, st
+
+
+def snapshot(r, fans, st):
+    lv = st.get("sens", {})
+    return {"host": HOST, "ts": st.get("last", 0), "now": int(time.time()), "level": st.get("level", 0),
+            "sensors": [{"key": s["key"], "name": s["name"], "kind": s["kind"], "t": s["t"], "lim": s["lim"],
+                         "lvl": lv.get(s["key"], {}).get("lvl", level(s["t"], s["lim"]) if s["lim"] else None)} for s in r],
+            "fans": fans, "mit": {k: st.get("mit", {}).get(k) for k in ("active", "since")},
+            "events": st.get("events", [])[-6:], "test": st.get("test", 0), "halt": halted()}
+
+
+def parse(argv, dry=True):
+    """-> (fake, over); timing overrides go into TUNE. ValueError on anything out of range."""
+    def vals(flag):
+        return [argv[i + 1] for i, a in enumerate(argv[:-1]) if a == flag]
+    fake = {k: float(v) for x in vals("--fake") for k, v in (p.split("=") for p in x.split(","))}
+    over = {}
+    for x in vals("--set"):
+        k, v = x.split("=")
+        if k in TUNE:
+            if not (0 if dry else 1) <= float(v) <= 240:  # hot_min=0 = shut down on the first HOT check
+                raise ValueError(f"{k}={v}: allowed {0 if dry else 1}..240")
+            TUNE[k] = float(v)
+        else:
+            lim = tuple(float(i) for i in v.split(","))
+            if len(lim) != 3 or not 20 <= lim[0] < lim[1] < lim[2] <= 150:
+                raise ValueError(f"{k}={v}: need warn,hot,emerg ascending within 20..150")
+            over[k] = lim
+    return fake, over
+
+
+def refuse(argv, acts, dry):
+    """Why this command line is refused, or None. audit 2026-10-12: `--check --set hot_min=0` changed only TUNE,
+    passed the old `fake or over` test and could reach a real poweroff."""
+    if not acts or dry:
+        return None
+    if "--fake" in argv:
+        return "--fake only together with --dry-run (or without an action flag)"
+    if "--set" in argv and "--really" not in argv:
+        return "--set with an action needs --dry-run (or --really for a real run with these limits)"
+    return None
+
+
+def self_test():
+    assert refuse(["--check", "--set", "hot_min=0"], ["--check"], False)          # the audited bypass
+    assert refuse(["--apply", "--set", "cpu=80,85,90"], ["--apply"], False)
+    assert refuse(["--check", "--fake", "cpu=99", "--really"], ["--check"], False)
+    assert refuse(["--check", "--set", "hot_min=0", "--dry-run"], ["--check"], True) is None
+    assert refuse(["--check", "--set", "hot_min=20", "--really"], ["--check"], False) is None
+    assert refuse(["--set", "cpu=80,85,90"], [], False) is None                     # print mode
+    assert refuse(["--check"], ["--check"], False) is None                          # the timer's own command line
+    for bad, dry in (("hot_min=-1", True), ("hot_min=0", False), ("hot_min=999", True), ("cpu=95,90,100", True),
+                     ("cpu=nan,90,95", True), ("cpu=80,90", True), ("cpu=5,90,95", True)):
+        try:
+            parse(["--set", bad], dry)
+        except ValueError:
+            continue
+        raise AssertionError(f"accepted --set {bad}")
+    keep = dict(TUNE)
+    assert parse(["--set", "hot_min=0"], True) == ({}, {}) and TUNE["hot_min"] == 0
+    assert parse(["--set", "cpu=80,85,90", "--fake", "cpu=99"], False) == ({"cpu": 99.0}, {"cpu": (80.0, 85.0, 90.0)})
+    TUNE.update(keep)
+    print("self-test passed")
+
+
+if __name__ == "__main__":
+    argv = sys.argv[1:]
+    assert level(95, (90, 95, 100)) == 2 and settle(0, 0, 99, (90, 95, 100))[0] == 0 \
+        and settle(0, 2, 99, (90, 95, 100))[0] == 2 and settle(2, 2, 93, (90, 95, 100))[0] == 2 \
+        and settle(2, 1, 91, (90, 95, 100))[0] == 1 and settle(1, 1, 80, (90, 95, 100))[0] == 0
+    if "--self-test" in argv:
+        sys.exit(self_test())
+    acts = [a for a in ("--check", "--apply", "--resume", "--test") if a in argv]
+    dry = "--dry-run" in argv
+    if why := refuse(argv, acts, dry):
+        sys.exit(why)
+    try:
+        fake, over = parse(argv, dry)
+    except ValueError as e:
+        sys.exit(f"bad --fake/--set: {e}")
+    if acts and os.geteuid() != 0:  # the CSV, state and sysfs writes need root
+        os.execvp("sudo", ["sudo", "-n", os.path.abspath(sys.argv[0]), *argv])
+    if "--check" in argv:
+        r, fans, st = check(dry, fake, over)
+        if "--json" in argv:
+            print(json.dumps(snapshot(r, fans, st)))
+    elif "--apply" in argv or "--resume" in argv:
+        st = load(dry)
+        mit = st.setdefault("mit", {"active": False, "orig": {}, "set": {}})
+        if "--apply" in argv:
+            done = apply(mit, dry)
+            mit.update(active=True, since=mit.get("since") or int(time.time()))
+            print(("would apply: " if dry else "applied: ") + (", ".join(done) or "nothing to change"))
+        else:
+            print(("would undo: " if dry else "undone: ") + (", ".join(restore(mit, dry)) or "nothing to undo"))
+            mit.update(active=False, orig={}, set={})
+        save(st, dry)
+    elif "--test" in argv:
+        st = load(dry)
+        st["test"] = int(time.time())
+        save(st, dry)
+        print("test queued: fleet-heat on odin sends it through thor within ~5 min (or: fleet-heat --test " + HOST + ")")
+    else:
+        r, fans = sensors(fake)
+        for s in r:
+            if s["key"] in over and s["lim"]:
+                s["lim"] = over[s["key"]]
+        st = load(dry)
+        if not st.get("last"):
+            st = load(True) or st  # pilot (dry-run timer): fall back to its state
+        if "--json" in argv:
+            print(json.dumps(snapshot(r, fans, st)))
+        else:
+            print(readout(r, fans, {k: v["lvl"] for k, v in st.get("sens", {}).items()}))
+            if "--status" in argv:
+                mit = st.get("mit", {})
+                print(f"\nhost {HOST}: level {NAMES[st.get('level', 0)]}; last check "
+                      f"{int(time.time() - st['last'])}s ago" if st.get("last") else f"\nhost {HOST}: never checked")
+                print("mitigation: " + (f"ACTIVE since {datetime.fromtimestamp(mit['since']):%H:%M} "
+                                        f"(undo: sudo host-heat --resume)" if mit.get("active") else "none"))
+                print("halt file: " + (halted() or "none"))
+                print("timer: " + run(["systemctl", "is-active", "host-heat.timer"]).strip())
+                for ts, kind, text in st.get("events", [])[-5:]:
+                    print(f"  {datetime.fromtimestamp(ts):%m-%d %H:%M} {text}")
+                print(f"csv: {CSV_DIR}")

@@ -1,0 +1,11 @@
+[Unit]
+Description=Power profile follows the charger (performance plugged in, power-saver on battery)
+After=power-profiles-daemon.service
+Wants=power-profiles-daemon.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/ac-power-profile
+
+[Install]
+WantedBy=graphical.target

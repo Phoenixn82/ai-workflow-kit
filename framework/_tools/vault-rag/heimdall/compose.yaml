@@ -1,0 +1,31 @@
+# vault-rag embeddings on heimdall (added 2026-10-12, audit: thor sleeps after 60 idle min and its Ollama queue
+# makes embeds wait behind 27B/35B models). CPU-only Ollama serving nomic-embed-text, always resident.
+# Deployed copy: heimdall:~/services/ollama-embed/ (this file + nomic-embed-text.Modelfile). HEIMDALL_HOST (the tailnet
+# address it binds to) comes from ~/.config/ai-workflow-kit/hosts.env; Compose refuses to start without it. Apply:
+#   docker compose --env-file ~/.config/ai-workflow-kit/hosts.env -f ~/services/ollama-embed/compose.yaml up -d
+#   docker exec ollama-embed ollama pull nomic-embed-text:v1.5
+#   docker cp ~/services/ollama-embed/nomic-embed-text.Modelfile ollama-embed:/tmp/m && docker exec ollama-embed ollama create nomic-embed-text:latest -f /tmp/m
+# Kill: docker stop ollama-embed   (resume: docker start ollama-embed; restart: unless-stopped keeps it stopped across reboots)
+#   (vault-rag then answers FTS-only; reindex aborts, index unchanged)
+# Rollback to thor: EMBED_URL=<thor's Ollama URL> in odin's hosts.env (read by vault_rag.py and systemd/vault-rag-reindex.service).
+services:
+  ollama:
+    image: ollama/ollama:0.33.3          # same version as thor
+    container_name: ollama-embed
+    network_mode: host                   # like uptime-kuma/pihole; bound to the tailnet IP only (below)
+    environment:
+      OLLAMA_HOST: ${HEIMDALL_HOST:?set HEIMDALL_HOST in ~/.config/ai-workflow-kit/hosts.env}:11434   # tailscale0 only, never the LAN; if tailscale is not up yet at boot,
+                                         # ollama exits on bind and the restart policy retries until it is
+      OLLAMA_MAX_LOADED_MODELS: "1"
+      OLLAMA_NUM_PARALLEL: "4"            # vault_rag.py sends reindex batches of 2, so a hook query always finds a free slot
+      OLLAMA_KEEP_ALIVE: "-1"            # the small embed model stays resident
+    volumes:
+      - models:/root/.ollama             # named volume: keeps weights out of heimdall-backup's ~/services rsync
+    cpus: 3                              # never more than 3 threads; heimdall's scheduler jobs keep the rest
+    cpu_shares: 256                      # and lose to every default-weight container/service under contention
+    mem_limit: 1536m
+    mem_reservation: 512m
+    restart: unless-stopped
+volumes:
+  models:
+    name: ollama-embed-models

@@ -1,0 +1,472 @@
+#!/usr/bin/env python3
+"""tg: the one Telegram sender. One group per topic, so heat, pings, lane-intel... never share a chat window.
+  tg <topic> <message...>   post to the topic's chat; silent unless the topic is heat (only heat buzzes)
+  tg --test <topic>         send "test from <host> <time>" to that topic
+  tg --show                 topic table, own chat or default (no ids printed); writes the seed config if missing
+  tg --claim [secs]         fresh install: prints a one-time code; send it to the bot from your own account and
+                            your private chat becomes the owner (the fallback chat and the group-ownership check)
+  tg --discover [secs]      list the groups the bot sees (titles only), map those titled like a topic (needs an owner)
+  tg --self-test            offline checks
+Config ~you/.config/telegram/topics.json = {"topics": {"heat": {"chat_id": null, "notify": true}, "fleet": ...},
+"default_chat_id": "..."}. A topic without a chat_id uses default_chat_id; an unknown topic goes to misc.
+Bot token ~you/telegram-bot.token, read in-process (never argv, never printed). Canonical copy: heimdall
+/usr/local/bin/tg. odin's ~/.local/bin/tg forwards here over ssh. Source: AI_Projects/_tools/telegram/.
+No bot token = Telegram not configured: tg prints "telegram not configured", sends nothing and exits 0, so alerting
+callers keep working without it. A configured sender that fails exits non-zero. TG_HOME overrides the home above."""
+import contextlib
+import hmac
+import io
+import json
+import os
+import re
+import secrets
+import shutil
+import signal
+import socket
+import subprocess
+import sys
+import tempfile
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+from pathlib import Path
+
+# ponytail: not plain "~": root callers (heimdall-alert@.service) must read you's files too; on a machine without
+# that user it is plain ~
+_OWNER = os.path.expanduser("~you")
+HOME = Path(os.environ.get("TG_HOME") or (_OWNER if _OWNER.startswith("/") else Path.home()))
+CFG = HOME / ".config/telegram/topics.json"
+TOKEN = HOME / "telegram-bot.token"
+LEGACY_CHAT = HOME / "services/uptime-kuma/telegram-chat-id"  # the one chat everything used before topics
+TOPICS = ["heat", "fleet", "lane-intel", "weekly-review", "jobs", "mail", "misc"]
+
+
+def norm(s):
+    return re.sub(r"[^a-z0-9]", "", s.lower())
+
+
+def seed(default):
+    return {"topics": {t: {"chat_id": None, "notify": t == "heat"} for t in TOPICS}, "default_chat_id": default}
+
+
+def load():  # never writes: a root caller must not leave a root-owned config behind
+    if CFG.exists():
+        return json.loads(CFG.read_text())
+    try:
+        return seed(LEGACY_CHAT.read_text().strip())
+    except FileNotFoundError:  # fresh install: no owner yet, `tg --claim` sets it
+        return seed(None)
+
+
+def save(cfg):
+    CFG.parent.mkdir(parents=True, exist_ok=True)
+    tmp = CFG.with_suffix(".tmp")
+    tmp.write_text(json.dumps(cfg, indent=2) + "\n")
+    tmp.chmod(0o600)
+    tmp.replace(CFG)
+
+
+def route(cfg, topic):
+    """(topic, chat_id, loud): unknown topic -> misc, no chat_id -> default ("" before tg --claim), only heat may buzz."""
+    topic = topic if topic in cfg["topics"] else "misc"
+    t = cfg["topics"].get(topic) or {}
+    return topic, str(t.get("chat_id") or cfg["default_chat_id"] or ""), topic == "heat" and t.get("notify") is True
+
+
+def api(method, data=None, timeout=20):
+    tok = TOKEN.read_text().strip()
+    try:
+        with urllib.request.urlopen(f"https://api.telegram.org/bot{tok}/{method}",
+                                    urllib.parse.urlencode(data or {}).encode(), timeout=timeout) as r:
+            return json.load(r)
+    except urllib.error.HTTPError as e:
+        raise RuntimeError(f"{method}: HTTP {e.code} {e.read(300).decode(errors='replace')}".replace(tok, "<bot>")) from None
+    except (OSError, ValueError) as e:
+        raise RuntimeError(f"{method}: {e}".replace(tok, "<bot>")) from None
+
+
+def log(msg):
+    print(f"tg: {msg}", file=sys.stderr)
+    subprocess.run(["logger", "-t", "tg", msg])
+
+
+def configured(what="nothing sent"):
+    """False (after one log line) when there is no bot token: Telegram is optional, so callers must not fail on it."""
+    if TOKEN.exists():
+        return True
+    log(f"telegram not configured (no bot token at {TOKEN}); {what}")
+    return False
+
+
+def send(topic, text):
+    if not configured():
+        return
+    try:
+        cfg = json.loads(CFG.read_text())
+        route(cfg, topic)  # a malformed map fails here, not mid-send
+    except (OSError, ValueError, KeyError, TypeError, AttributeError) as e:
+        # ponytail: never lose an alert to a missing/broken map: say so loudly, then use the pre-topics chat
+        log(f"{CFG} unusable ({type(e).__name__}); topic {topic} goes to the old chat")
+        try:
+            cfg = seed(LEGACY_CHAT.read_text().strip())
+        except OSError:
+            sys.exit(f"tg: no usable {CFG} and no {LEGACY_CHAT}: nothing sent (fresh install: run tg --claim)")
+    topic, chat, loud = route(cfg, topic)
+    if not chat:
+        sys.exit(f"tg: topic {topic} has no group and there is no owner chat yet: nothing sent (run tg --claim)")
+    data = {"chat_id": chat, "text": text[:4096]}
+    if not loud:
+        data["disable_notification"] = "true"
+    try:
+        if api("sendMessage", data).get("ok") is True:
+            return
+        err = "not ok"
+    except RuntimeError as e:
+        err = str(e)
+    subprocess.run(["logger", "-t", "tg", f"send to {topic} failed ({err[:200]}): {text[:300]}"])
+    sys.exit(f"tg: send to {topic} failed: {err[:300]}")
+
+
+def chats(updates):
+    """{chat_id: title} of the groups in getUpdates results; a group upgraded to a supergroup keeps its new id only."""
+    seen = {}
+    for u in updates:
+        for k in ("message", "edited_message", "channel_post", "my_chat_member", "chat_member"):
+            m = u.get(k) or {}
+            c = m.get("chat") or {}
+            if c.get("type") in ("group", "supergroup", "channel"):
+                seen[str(c["id"])] = c.get("title", "")
+            if m.get("migrate_to_chat_id"):
+                seen.pop(str(c.get("id")), None)
+                seen[str(m["migrate_to_chat_id"])] = c.get("title", "")
+    return seen
+
+
+def mapping(cfg, seen, owned):
+    """Point each topic at the group titled like it (case and spacing ignored), only a group the user created (owned)
+    and never over the topic's live group: [(title, result)], no ids."""
+    out, cand = [], {}
+    for cid, title in seen.items():
+        t = next((t for t in cfg["topics"] if norm(t) == norm(title)), None)
+        if not t:
+            out.append((title, "(no topic of that name, ignored)"))
+        elif not owned(cid):
+            out.append((title, "(not a group you created, or the bot left it: ignored)"))
+        else:
+            cand.setdefault(t, []).append((cid, title))
+    for t, cs in cand.items():
+        old = str(cfg["topics"][t].get("chat_id") or "")
+        if old in [c for c, _ in cs] or (old and owned(old)):
+            out += [(title, t if c == old else f"(kept {t}'s existing group)") for c, title in cs]
+        elif len(cs) > 1:
+            out += [(title, f"(several groups titled {t}: delete or rename the extras; not mapped)") for _, title in cs]
+        else:
+            cfg["topics"][t]["chat_id"] = cs[0][0]
+            out.append((cs[0][1], t))
+    return out
+
+
+def show(cfg):
+    if not cfg.get("default_chat_id"):
+        print("  no owner chat yet: run tg --claim, then tg --discover")
+    for t in cfg["topics"]:
+        print(f"  {t:14} {'own group' if cfg['topics'][t].get('chat_id') else 'default chat (fallback)'}"
+              f"{'  BUZZ' if route(cfg, t)[2] else '  silent'}")
+
+
+def stop(*_):
+    raise KeyboardInterrupt
+
+
+@contextlib.contextmanager
+def inbox_paused():
+    """Read the bot's updates without losing any. ponytail: example_app-inbox (heimdall) confirms every update of this bot
+    within seconds; pause it (crash-safe by design) and never pass an offset, so nothing is confirmed here and example_app
+    still gets every update afterwards. Ctrl-C / SIGTERM / SIGHUP just end the listening."""
+    inbox = bool(shutil.which("systemctl")) and subprocess.run(
+        ["systemctl", "--user", "is-active", "--quiet", "example_app-inbox"]).returncode == 0
+    if inbox:
+        subprocess.run(["systemctl", "--user", "stop", "example_app-inbox"], check=True)
+    signal.signal(signal.SIGTERM, stop)
+    signal.signal(signal.SIGHUP, stop)
+    try:
+        yield
+    except KeyboardInterrupt:
+        pass
+    finally:
+        if inbox:
+            subprocess.run(["systemctl", "--user", "start", "example_app-inbox"])
+
+
+def claimant(updates, code):
+    """User id of the first private message to the bot carrying the one-time code (`/start CODE`, which the t.me deep
+    link sends, `/claim CODE` or the bare code), else None. In a private chat the chat id is the sender's user id."""
+    for u in updates:
+        m = u.get("message") or {}
+        c, f = m.get("chat") or {}, m.get("from") or {}
+        w = (m.get("text") or "").split()
+        got = w[-1] if len(w) == 1 or (len(w) == 2 and w[0].split("@")[0] in ("/start", "/claim")) else ""
+        if (c.get("type") == "private" and not f.get("is_bot") and f.get("id") is not None and f.get("id") == c.get("id")
+                and hmac.compare_digest(got.encode(), code.encode())):
+            return str(c["id"])
+    return None
+
+
+def claim(wait, code=None):
+    """Fresh install (audit S16): the account that sends the code printed here becomes the owner: its private chat is
+    default_chat_id, the fallback chat and what --discover checks group ownership against. The code exists only in
+    this terminal, so a stranger who messages the bot first is never trusted."""
+    cfg = load()
+    if cfg.get("default_chat_id"):
+        sys.exit(f"tg: an owner is already set (default_chat_id in {CFG}); remove that key to claim again")
+    me = api("getMe")["result"]["username"]
+    code, owner = code or secrets.token_urlsafe(12), None
+    print(f"From the Telegram account that should own these alerts, open https://t.me/{me}?start={code} and tap\n"
+          f"Start (or send `/start {code}` to @{me} in a private chat). Listening {wait}s; nothing else counts.", flush=True)
+    with inbox_paused():
+        end = time.time() + wait
+        while True:
+            try:
+                owner = claimant(api("getUpdates", {"timeout": 0})["result"], code)
+            except RuntimeError as e:  # e.g. 409 while example_app's last long poll winds down
+                print(f"  ({e})", file=sys.stderr)
+            if owner or time.time() >= end:
+                break
+            time.sleep(3)
+    if owner is None:
+        sys.exit("tg: the code did not arrive in time; nothing saved, run tg --claim again")
+    cfg["default_chat_id"] = owner
+    save(cfg)
+    print("owner saved: your private chat with the bot is the fallback chat until each topic has its own group.\n"
+          "Next: create the topic groups, add the bot, run tg --discover.")
+    send("misc", f"tg on {socket.gethostname()}: this chat now owns these alerts (fallback for topics without a group)")
+
+
+def discover(wait):
+    me = api("getMe")["result"]["username"]
+    cfg, seen, known = load(), {}, {}
+    owner = str(cfg.get("default_chat_id") or "")  # the owner's private chat with the bot: its id is the owner's user id
+    if not owner.isdigit():
+        sys.exit("tg: no owner yet (or default_chat_id is not a private chat): run tg --claim first, group ownership "
+                 "is checked against it")
+
+    def owned(cid):  # anyone can add the bot (or the user) to a group called "Heat"; only map groups they created
+        if cid not in known:
+            try:
+                known[cid] = api("getChatMember", {"chat_id": cid, "user_id": owner})["result"]["status"] == "creator"
+            except (RuntimeError, KeyError, TypeError):
+                known[cid] = False
+        return known[cid]
+
+    with inbox_paused():
+        print(f"Listening {wait}s. Send /start@{me} in each group now (or remove and re-add the bot).", flush=True)
+        end = time.time() + wait
+        while time.time() < end and not all(cfg["topics"][t].get("chat_id") for t in cfg["topics"]):
+            try:
+                new = chats(api("getUpdates", {"timeout": 0})["result"])
+            except RuntimeError as e:  # e.g. 409 while example_app's last long poll winds down
+                print(f"  ({e})", file=sys.stderr)
+                new = {}
+            for cid, title in new.items():
+                if cid not in seen:
+                    print(f"  saw: {title}", flush=True)
+            seen.update(new)
+            mapping(cfg, seen, owned)
+            time.sleep(3)
+    for title, result in mapping(cfg, seen, owned):
+        print(f"  group {title!r} -> {result}")
+    save(cfg)
+    show(cfg)
+
+
+def self_test():
+    global CFG, LEGACY_CHAT, TOKEN, api, log
+    d = Path(tempfile.mkdtemp())
+    CFG, LEGACY_CHAT, TOKEN = d / "topics.json", d / "chat", d / "token"
+    LEGACY_CHAT.write_text("111\n")
+    TOKEN.write_text("x\n")
+    cfg = load()
+    assert not CFG.exists() and [t for t in TOPICS if cfg["topics"][t]["notify"]] == ["heat"]
+    assert route(cfg, "nonsense") == ("misc", "111", False) and route(cfg, "heat") == ("heat", "111", True)
+    cfg["topics"]["fleet"]["chat_id"], cfg["topics"]["misc"]["notify"] = -5, True
+    assert route(cfg, "fleet") == ("fleet", "-5", False) and route(cfg, "misc")[2] is False  # only heat buzzes
+    ups = [{"message": {"chat": {"id": -1, "type": "group", "title": "Heat"}}},
+           {"my_chat_member": {"chat": {"id": -2, "type": "supergroup", "title": "Lane Intel"}}},
+           {"message": {"chat": {"id": 7, "type": "private", "first_name": "P"}}},
+           {"message": {"chat": {"id": -3, "type": "group", "title": "weekly review"}, "migrate_to_chat_id": -1003}},
+           {"message": {"chat": {"id": -4, "type": "group", "title": "parts-yard"}}}]
+    seen = chats(ups)
+    assert seen == {"-1": "Heat", "-2": "Lane Intel", "-1003": "weekly review", "-4": "parts-yard"}, seen
+    mine = {"-1", "-2", "-1003", "-4", "-8", "-9", "-10", "-11"}.__contains__
+    assert dict(mapping(cfg, seen, mine)) == {"Heat": "heat", "Lane Intel": "lane-intel",
+                                              "weekly review": "weekly-review", "parts-yard": "(no topic of that name, ignored)"}
+    alive = {"-11": "HEAT", "-6": "Fleet", "-8": "misc", "-9": "Misc"}  # 2nd heat, stranger's fleet, two misc groups
+    r = dict(mapping(cfg, alive, mine))
+    assert route(cfg, "heat")[1] == "-1" and "kept" in r["HEAT"] and "not a group" in r["Fleet"], r
+    assert route(cfg, "fleet")[1] == "-5" and route(cfg, "misc")[1] == "111" and "several" in r["misc"], r
+    cfg["topics"]["fleet"]["chat_id"] = "-7"  # fleet's group is gone (or was upgraded): an owned new one replaces it
+    assert mapping(cfg, {"-10": "Fleet"}, mine) == [("Fleet", "fleet")] and route(cfg, "fleet")[1] == "-10"
+    assert route(cfg, "weekly-review")[1] == "-1003" and route(cfg, "jobs")[1] == "111"
+    save(cfg)
+    assert oct(CFG.stat().st_mode & 0o777) == "0o600" and load() == cfg
+    sent, logged = [], []
+    api = lambda m, data=None, timeout=20: sent.append((m, data)) or {"ok": True}
+    log = logged.append
+    send("heat", "hot"); send("whatever", "x" * 5000)
+    assert sent[0][1] == {"chat_id": "-1", "text": "hot"}  # heat: no disable_notification -> buzzes
+    assert sent[1][1]["disable_notification"] == "true" and sent[1][1]["chat_id"] == "111" and len(sent[1][1]["text"]) == 4096
+    assert not logged
+    for broken in ("{not json", '{"topics": []}', None):  # broken or missing map: logged, still delivered to the old chat
+        CFG.write_text(broken) if broken else CFG.unlink()
+        send("heat", "hot2")
+        assert sent[-1][1] == {"chat_id": "111", "text": "hot2"} and len(logged) == 1, (broken, logged)
+        logged.clear()
+    LEGACY_CHAT.unlink()
+    try:
+        send("fleet", "x")
+        raise AssertionError("no map and no old chat must fail")
+    except SystemExit as e:
+        assert "nothing sent" in str(e) and len(logged) == 1
+    LEGACY_CHAT.write_text("111\n")
+    logged.clear()
+    def down(m, data=None, timeout=20):
+        raise RuntimeError("sendMessage: HTTP 502")
+    api, real_run = down, subprocess.run  # configured sender that fails: non-zero exit (its logger line stays out
+    subprocess.run = lambda *a, **k: None  # of the real journal)
+    try:
+        send("fleet", "x")
+        raise AssertionError("a failed send must exit non-zero")
+    except SystemExit as e:
+        assert "failed" in str(e) and e.code not in (0, None), e
+    finally:
+        subprocess.run = real_run
+    TOKEN.unlink()  # not configured: one log line, nothing sent, exit 0
+    api, n = (lambda m, data=None, timeout=20: sent.append((m, data)) or {"ok": True}), len(sent)
+    logged.clear()
+    send("heat", "hot3")
+    main(["--test", "fleet"])
+    main(["--show"])
+    assert len(sent) == n and len(logged) == 3 and all("telegram not configured" in x for x in logged), logged
+    for cmd in (["--discover"], ["--claim"]):
+        try:
+            main(cmd)
+            raise AssertionError(f"{cmd} without a token must exit 1")
+        except SystemExit as e:
+            assert e.code == 1
+    fresh_install_test()
+    print("tg self-test: ok")
+
+
+def fresh_install_test():
+    """audit S16: only a bot token (no topics.json, no legacy chat) -> tg --claim -> tg --discover -> every topic
+    routes to its own group; a stranger's message or group is never trusted. Telegram is mocked."""
+    global CFG, LEGACY_CHAT, TOKEN, api, inbox_paused
+    d = Path(tempfile.mkdtemp())
+    CFG, LEGACY_CHAT, TOKEN = d / "topics.json", d / "chat", d / "token"
+    TOKEN.write_text("x\n")
+    cfg = load()  # used to raise FileNotFoundError on the missing legacy chat
+    assert cfg["default_chat_id"] is None and route(cfg, "heat") == ("heat", "", True) and not CFG.exists()
+    owner, me, stranger = 42, {"id": 42, "is_bot": False}, {"id": 99, "is_bot": False}
+    groups = {-(i + 1): t.replace("-", " ").title() for i, t in enumerate(TOPICS)}  # created by the owner
+    groups[-66] = "Heat"  # a stranger's group with a topic's title
+    sent, ups = [], []
+
+    def tele(m, data=None, timeout=20):
+        sent.append((m, data))
+        if m == "getMe":
+            return {"ok": True, "result": {"username": "x_bot"}}
+        if m == "getUpdates":
+            return {"ok": True, "result": ups}
+        if m == "getChatMember":  # creator only for the owner's own groups
+            mine = int(data["chat_id"]) in groups and int(data["chat_id"]) != -66 and data["user_id"] == str(owner)
+            return {"ok": True, "result": {"status": "creator" if mine else "member"}}
+        return {"ok": True}
+    api, inbox_paused, real_sleep = tele, contextlib.nullcontext, time.sleep
+    time.sleep = lambda s: None
+    try:
+        for cmd in (lambda: send("fleet", "x"), lambda: discover(1)):  # no owner yet: refuse, never guess one
+            try:
+                with contextlib.redirect_stdout(io.StringIO()):
+                    cmd()
+                raise AssertionError("must refuse before tg --claim")
+            except SystemExit as e:
+                assert "tg --claim" in str(e), e
+        assert not [m for m, _ in sent if m == "sendMessage"]
+        code = "C0de_one-time-XYZ"
+        dm = lambda t: [{"message": {"chat": {"id": 42, "type": "private"}, "from": me, "text": t}}]
+        assert all(claimant(dm(t), code) == "42" for t in (f"/start {code}", f"/start@x_bot {code}", f"/claim {code}", code))
+        assert not any(claimant(dm(t), code) for t in (f"hi {code}", f"/start {code} x", "/start", f"/start {code[:-1]}"))
+        ups[:] = [{"message": {"chat": {"id": 99, "type": "private"}, "from": stranger, "text": "/start"}},  # first in
+                  {"message": {"chat": {"id": 99, "type": "private"}, "from": stranger, "text": "/start guess"}},
+                  {"message": {"chat": {"id": -66, "type": "group", "title": "Heat"}, "from": me, "text": code}},
+                  {"message": {"chat": {"id": 99, "type": "private"}, "from": {"id": 98, "is_bot": True}, "text": code}},
+                  {"message": {"chat": {"id": 42, "type": "private"}, "from": me, "text": f"/start {code}"}}]
+        try:  # the code never arrived: nothing saved
+            with contextlib.redirect_stdout(io.StringIO()):
+                claim(0, "another-code")
+            raise AssertionError("a claim without the code must fail")
+        except SystemExit as e:
+            assert "nothing saved" in str(e) and not CFG.exists()
+        with contextlib.redirect_stdout(io.StringIO()):
+            claim(0, code)
+        assert load()["default_chat_id"] == "42" and oct(CFG.stat().st_mode & 0o777) == "0o600"
+        assert sent[-1] == ("sendMessage", {"chat_id": "42", "text": sent[-1][1]["text"], "disable_notification": "true"})
+        try:
+            claim(0, code)
+            raise AssertionError("a second claim must refuse")
+        except SystemExit as e:
+            assert "already set" in str(e)
+        ups[:] = [{"message": {"chat": {"id": cid, "type": "supergroup", "title": t}, "from": me, "text": "/start@x_bot"}}
+                  for cid, t in groups.items()]
+        with contextlib.redirect_stdout(io.StringIO()):
+            discover(1)
+        cfg = load()
+        assert all(cfg["topics"][t]["chat_id"] for t in TOPICS) and cfg["topics"]["heat"]["chat_id"] == "-1", cfg
+        assert all(d["user_id"] == "42" for m, d in sent if m == "getChatMember")
+        del sent[:]
+        for t in TOPICS:
+            send(t, "hi " + t)
+        want = {str(-(i + 1)) for i in range(len(TOPICS))}
+        assert {d["chat_id"] for _, d in sent} == want and [d for _, d in sent if "disable_notification" not in d] == \
+            [{"chat_id": "-1", "text": "hi heat"}], sent
+    finally:
+        time.sleep = real_sleep
+        shutil.rmtree(d, ignore_errors=True)
+
+
+def main(a):
+    if a == ["--self-test"]:
+        self_test()
+    elif a == ["--show"]:
+        if not configured("put the bot token there, then run tg --claim and tg --discover"):
+            return
+        if not CFG.exists() and os.geteuid() != 0:  # root would leave a file you cannot read
+            save(load())
+        show(load())
+    elif a[:1] == ["--claim"] and len(a) <= 2:
+        if not configured("put the bot token there first"):
+            sys.exit(1)
+        if os.geteuid() == 0:  # root would leave a topics.json the token's owner cannot read
+            sys.exit("tg: run --claim as the user that owns the bot token, not as root")
+        try:
+            claim(min(int(a[1]) if len(a) == 2 else 120, 240))
+        except RuntimeError as e:  # Telegram unreachable or the token refused: one line, token already redacted
+            sys.exit(f"tg: {e}")
+    elif a[:1] == ["--discover"] and len(a) <= 2:
+        if not configured("put the bot token there first"):
+            sys.exit(1)
+        try:
+            discover(min(int(a[1]) if len(a) == 2 else 120, 240))
+        except RuntimeError as e:
+            sys.exit(f"tg: {e}")
+    elif len(a) == 2 and a[0] == "--test":
+        send(a[1], f"test from {socket.gethostname()} {time.strftime('%Y-%m-%d %H:%M')} (topic {a[1]})")
+    elif len(a) >= 2 and not a[0].startswith("-"):
+        send(a[0], " ".join(a[1:]))
+    else:
+        sys.exit(__doc__)
+
+
+if __name__ == "__main__":
+    main(sys.argv[1:])

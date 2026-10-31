@@ -1,0 +1,12 @@
+[Unit]
+Description=Nightly restic copy of the media folders to a second drive (media-backup)
+After=local-fs.target docker.service
+# Add your two mount points so systemd waits for them, e.g.: RequiresMountsFor=/srv/media /srv/backup-disk
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/media-backup --run
+Nice=19
+IOSchedulingClass=idle
+# the first run of a big library takes hours
+TimeoutStartSec=20h

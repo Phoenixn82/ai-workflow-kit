@@ -1,0 +1,14 @@
+[Unit]
+Description=retain: archive-first retention (moves old .bak / Codex leftovers to ~/.local/share/archive), Claude version check, plugin repatch
+Documentation=file://%h/AI_Projects/_tools/retention/README.md
+# global stop: skipped while HALT exists; retain.py itself also checks HALT + preflight.py before any move
+ConditionPathExists=!%h/AI_Projects/_system/automations/HALT
+
+[Service]
+Type=oneshot
+Slice=agents.slice
+Nice=19
+IOSchedulingClass=idle
+TimeoutStartSec=30min
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/usr/bin/python3 %h/AI_Projects/_tools/retention/retain.py

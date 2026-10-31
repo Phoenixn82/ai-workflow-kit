@@ -1,0 +1,10 @@
+[Unit]
+Description=retain: Sundays 05:30 Etc/UTC
+
+[Timer]
+# after restic-odin (03:10) and weekly-review (03:17); uv-cache-prune (05:00) touches a different tree
+OnCalendar=Sun *-*-* 05:30:00 Etc/UTC
+Persistent=true
+
+[Install]
+WantedBy=timers.target

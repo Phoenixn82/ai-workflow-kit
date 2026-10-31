@@ -1,0 +1,87 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 540" width="960" height="540" role="img" aria-labelledby="title desc" font-family="ui-sans-serif, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif">
+  <title id="title">The web ladder</title>
+  <desc id="desc">The web read command climbs a ladder, cheapest first, and only escalates when blocked: Scrapling get (plain HTTP), fetch (headless), stealthy-fetch (stealth headless), then a zendriver real browser. It never clicks a CAPTCHA; if still blocked it uses web handoff. Other verbs: web gh uses the GitHub API, web act drives a dedicated identity browser, web login uses Sign in with Google with no passwords in chat, and web handoff sends the step to your phone so a human taps it. Banned: paid scraping APIs, CAPTCHA solvers, and driving your personal browser.</desc>
+  <defs>
+    <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerUnits="userSpaceOnUse" markerWidth="11" markerHeight="11" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#e2e8f0"/></marker>
+  </defs>
+  <rect width="960" height="540" rx="20" fill="#0f172a"/>
+
+  <text x="32" y="44" font-size="22" font-weight="700" fill="#f8fafc">The web ladder</text>
+  <text x="48" y="100" font-size="16" font-weight="700" fill="#f8fafc" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace">web read</text>
+  <text x="140" y="100" font-size="14" fill="#cbd5e1">cheapest first</text>
+
+  <!-- steps -->
+  <g stroke="#e2e8f0" stroke-width="1.5">
+    <rect x="48" y="360" width="128" height="90" rx="10" fill="#e2e8f0" fill-opacity="0.06"/>
+    <rect x="182" y="290" width="128" height="160" rx="10" fill="#e2e8f0" fill-opacity="0.10"/>
+    <rect x="316" y="220" width="128" height="230" rx="10" fill="#e2e8f0" fill-opacity="0.14"/>
+    <rect x="450" y="150" width="128" height="300" rx="10" fill="#e2e8f0" fill-opacity="0.18"/>
+  </g>
+  <g font-size="13" fill="#cbd5e1">
+    <text x="62" y="382">step 1</text>
+    <text x="196" y="312">step 2</text>
+    <text x="330" y="242">step 3</text>
+    <text x="464" y="172">step 4</text>
+  </g>
+  <g font-size="15" font-weight="700" fill="#f8fafc">
+    <text x="62" y="402">Scrapling get</text>
+    <text x="196" y="332">fetch</text>
+    <text x="330" y="262">stealthy-fetch</text>
+    <text x="464" y="192">zendriver</text>
+  </g>
+  <g font-size="13" fill="#cbd5e1">
+    <text x="62" y="421">plain HTTP</text>
+    <text x="196" y="351">headless</text>
+    <text x="330" y="281">stealth headless</text>
+    <text x="464" y="211">real browser</text>
+  </g>
+
+  <!-- escalation arrow -->
+  <line x1="64" y1="321" x2="510" y2="88" stroke="#e2e8f0" stroke-width="2" stroke-dasharray="7 5" marker-end="url(#ah)"/>
+  <text x="282" y="196" font-size="13" fill="#e2e8f0" text-anchor="middle" transform="rotate(-27.6 282 196)">escalate only when blocked</text>
+
+  <text x="48" y="472" font-size="13" fill="#94a3b8">cheaper, faster</text>
+  <text x="578" y="472" font-size="13" fill="#94a3b8" text-anchor="end">heavier, slower</text>
+
+  <!-- never clicks -->
+  <rect x="48" y="488" width="530" height="32" rx="16" fill="#f87171" fill-opacity="0.12" stroke="#f87171" stroke-width="1.5"/>
+  <text x="313" y="509" font-size="14" fill="#f8fafc" text-anchor="middle"><tspan font-weight="700" fill="#fca5a5">Never clicks a CAPTCHA.</tspan> Still blocked? Hand it to a human.</text>
+
+  <!-- other verbs -->
+  <text x="620" y="100" font-size="15" font-weight="700" fill="#f8fafc">Other web verbs</text>
+  <g font-size="13" fill="#cbd5e1">
+    <rect x="620" y="116" width="316" height="56" rx="10" fill="#1e293b" stroke="#e2e8f0" stroke-width="1.5"/>
+    <text x="638" y="140" font-size="15" font-weight="700" fill="#f8fafc" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace">web gh</text>
+    <text x="638" y="160">GitHub through its API, not scraping</text>
+
+    <rect x="620" y="182" width="316" height="56" rx="10" fill="#1e293b" stroke="#e2e8f0" stroke-width="1.5"/>
+    <text x="638" y="206" font-size="15" font-weight="700" fill="#f8fafc" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace">web act</text>
+    <text x="638" y="226">a dedicated identity browser</text>
+
+    <rect x="620" y="248" width="316" height="56" rx="10" fill="#1e293b" stroke="#e2e8f0" stroke-width="1.5"/>
+    <text x="638" y="272" font-size="15" font-weight="700" fill="#f8fafc" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace">web login</text>
+    <text x="638" y="292">Sign in with Google; no passwords in chat</text>
+
+    <rect x="620" y="314" width="316" height="56" rx="10" fill="#1e293b" stroke="#fca5a5" stroke-width="1.5"/>
+    <text x="638" y="338" font-size="15" font-weight="700" fill="#f8fafc" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace">web handoff</text>
+    <text x="638" y="358">goes to your phone: a human taps it</text>
+    <rect x="898" y="324" width="22" height="36" rx="4" fill="#334155" stroke="#e2e8f0" stroke-width="1.75"/>
+    <circle cx="909" cy="354" r="1.6" fill="#e2e8f0"/>
+  </g>
+
+  <!-- banned -->
+  <rect x="620" y="388" width="316" height="132" rx="12" fill="#f87171" fill-opacity="0.10" stroke="#f87171" stroke-width="1.5"/>
+  <circle cx="648" cy="413" r="11" fill="none" stroke="#f87171" stroke-width="2"/>
+  <path d="M640,421 L656,405" stroke="#f87171" stroke-width="2"/>
+  <text x="668" y="418" font-size="15" font-weight="700" fill="#fca5a5">Banned</text>
+  <g stroke="#f87171" stroke-width="2" stroke-linecap="round">
+    <path d="M640,441 l8,8 M648,441 l-8,8"/>
+    <path d="M640,465 l8,8 M648,465 l-8,8"/>
+    <path d="M640,489 l8,8 M648,489 l-8,8"/>
+  </g>
+  <g font-size="14" fill="#f8fafc">
+    <text x="660" y="450">paid scraping APIs</text>
+    <text x="660" y="474">CAPTCHA solvers</text>
+    <text x="660" y="498">driving your personal browser</text>
+  </g>
+</svg>

@@ -1,0 +1,2 @@
+# Any change on a mains supply (charger in or out): re-apply the power profile.
+SUBSYSTEM=="power_supply", ATTR{type}=="Mains", RUN+="/usr/bin/systemctl start --no-block ac-power-profile.service"

@@ -1,0 +1,24 @@
+# Diun (profile diun): weekly "newer image available" note to Telegram, sent silently. Notify only: it never
+# pulls or restarts anything. Mounted read-only by compose.yaml; the token and chat id come from two files beside it.
+# With pinned tags (this kit pins every image) Diun reports a re-published image for the tag you run. To also
+# hear about new version tags of one image, give that container the labels
+#   diun.watch_repo=true   and   diun.include_tags=^v?\d+\.\d+\.\d+$
+db:
+  path: /data/diun.db
+watch:
+  workers: 4
+  schedule: "0 9 * * 0"     # Sunday 09:00 in TZ (compose.yaml)
+  jitter: 30s
+  firstCheckNotif: false    # the first sighting of every image is silent (the baseline)
+  runOnStartup: true        # take that baseline now, so the first Sunday already reports real updates
+providers:
+  docker:
+    watchByDefault: true
+    watchStopped: false
+notif:
+  telegram:
+    tokenFile: /run/secrets/telegram.token
+    chatIDsFile: /run/secrets/telegram-chatids.json
+    disableNotification: true
+    templateBody: |
+      Diun on {{ escapeMarkdown .Meta.Hostname }}: {{ if .Entry.Image.HubLink }}[{{ .Entry.Image }}]({{ .Entry.Image.HubLink }}){{ else }}{{ .Entry.Image }}{{ end }} {{ if (eq .Entry.Status "new") }}newly added{{ else }}has an update{{ end }}. Nothing was changed; update by hand if wanted.

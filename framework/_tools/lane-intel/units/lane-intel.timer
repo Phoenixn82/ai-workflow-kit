@@ -1,0 +1,10 @@
+[Unit]
+Description=lane-intel daily at 05:40 Etc/UTC (+0-20 min)
+
+[Timer]
+OnCalendar=*-*-* 05:40:00 Etc/UTC
+RandomizedDelaySec=20m
+Persistent=true
+
+[Install]
+WantedBy=timers.target

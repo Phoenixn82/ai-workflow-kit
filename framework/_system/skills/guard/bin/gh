@@ -1,0 +1,163 @@
+#!/usr/bin/env python3
+"""Guard gh wrapper: a private->public flip runs the public-push gate first; every other call is plain gh.
+
+Installed as ~/.local/bin/guard/gh (symlink to this file) with ~/.local/bin/guard first on PATH. Intercepts
+`gh repo edit ... --visibility public` (flags may sit before or between the subcommand names) and non-GET `gh api`
+calls whose args, --input body (JSON-decoded too), -F key=@file/@- values or stdin set private=false or visibility=public.
+A flip whose target repo cannot be identified (bare repo name, repositories/<id>, graphql) is refused outright.
+The gate (--mode publicize) must PASS before the real gh runs; otherwise the call is refused.
+"""
+from __future__ import annotations
+
+import json
+import os
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+ME = Path(__file__).resolve()
+GATE = ME.parent.parent / "scripts" / "public_push_gate.py"
+REPO = re.compile(r"^(?:https?://)?(?:github\.com/)?([A-Za-z0-9-]+/[A-Za-z0-9._-]+?)(?:\.git)?/?$")
+API_REPO = re.compile(r"(?:^|/)repos/([^/{}?\s]+/[^/{}?\s]+?)(?:\.git)?(?:[/?]|$)")
+API_CURRENT_REPO = re.compile(r"(?:^|/)repos/\{owner\}/\{repo\}(?:[/?]|$)")
+# No leading \b: `-Fprivate=false` (pflag's attached short-flag value) must still match.
+GOES_PUBLIC = re.compile(r"""(?i)private["']?\s*[:=]\s*["']?false\b|visibility["']?\s*[:=]\s*["']?public\b""")
+EDIT_VALUE_FLAGS = {"-d", "--description", "-h", "--homepage", "--add-topic", "--remove-topic", "--default-branch",
+                    "--visibility", "--squash-merge-commit-message"}
+API_VALUE_FLAGS = {"-X", "--method", "-H", "--header", "-f", "--raw-field", "-F", "--field", "--input", "-q", "--jq",
+                   "-t", "--template", "--hostname", "-p", "--preview", "--cache"}
+
+
+def real_gh() -> str:
+    """First gh on PATH that is not this wrapper (the mise shim resolves its own binary, so no second hop)."""
+    for entry in os.environ.get("PATH", "").split(os.pathsep):
+        candidate = Path(entry or ".") / "gh"
+        if candidate.is_file() and os.access(candidate, os.X_OK) and candidate.resolve() != ME:
+            return str(candidate)
+    sys.exit("[guard gh] no real gh found on PATH after the guard wrapper")
+
+
+def split_args(argv: list[str], value_flags: set[str]) -> tuple[list[str], list[tuple[str, str]]]:
+    """(positionals, [(flag, value)]) for pflag spellings: --f v, --f=v, -Xv, -X=v, -X v, and -i bundled (-iXPOST).
+    Cobra accepts flags before or between subcommand names, so callers must not rely on argv positions."""
+    pos: list[str] = []
+    flags: list[tuple[str, str]] = []
+    i = 0
+    while i < len(argv):
+        arg = argv[i]
+        if arg == "--":
+            pos += argv[i + 1:]
+            break
+        if arg.startswith("--"):
+            name, eq, val = arg.partition("=")
+        elif arg.startswith("-") and len(arg) > 1:
+            while arg.startswith("-i") and len(arg) > 2 and arg[2] != "=":  # -i is gh api's only bool shorthand
+                flags.append(("-i", ""))
+                arg = "-" + arg[2:]
+            name, eq, val = arg[:2], "", arg[2:].removeprefix("=")
+            eq = "=" if val else ""
+        else:
+            pos.append(arg)
+            i += 1
+            continue
+        if not eq and name in value_flags and i + 1 < len(argv):
+            i += 1
+            val = argv[i]
+        flags.append((name, val))
+        i += 1
+    return pos, flags
+
+
+def read_source(source: str, stdin_body: bytes | None) -> str:
+    if source == "-":
+        return (stdin_body or b"").decode(errors="replace")
+    try:
+        return Path(source).read_text(errors="replace")
+    except OSError:
+        return ""  # ponytail: gh itself fails on an unreadable file, so nothing is sent
+
+
+def reads_stdin(argv: list[str]) -> bool:
+    pos, flags = split_args(argv, API_VALUE_FLAGS)
+    return "api" in pos and any(
+        (f == "--input" and v == "-") or (f in {"-F", "--field"} and v.partition("=")[2] == "@-") for f, v in flags
+    )
+
+
+def repo_edit_flip(argv: list[str], _stdin_body: bytes | None) -> tuple[bool, str | None, str | None]:
+    pos, flags = split_args(argv, EDIT_VALUE_FLAGS)
+    if "repo" not in pos or "edit" not in pos[pos.index("repo"):]:
+        return False, None, None
+    if not any(f == "--visibility" and v.lower() == "public" for f, v in flags):
+        return False, None, None
+    rest = pos[:]
+    rest.remove("repo")
+    rest.remove("edit")
+    if not rest:
+        return True, None, None
+    if len(rest) == 1 and (m := REPO.match(rest[0])):
+        return True, m.group(1), None
+    return True, None, f"cannot tell which repo `{' '.join(rest)}` is; pass it as OWNER/REPO"
+
+
+def api_flip(argv: list[str], stdin_body: bytes | None) -> tuple[bool, str | None, str | None]:
+    pos, flags = split_args(argv, API_VALUE_FLAGS)
+    if "api" not in pos:
+        return False, None, None
+    methods = [v.upper() for f, v in flags if f in {"-X", "--method"}]
+    if methods and methods[-1] in {"GET", "HEAD"}:
+        return False, None, None  # fields go in the query string; nothing is changed
+    body = ["\n".join(argv)]
+    for flag, value in flags:
+        if flag == "--input":
+            text = read_source(value, stdin_body)
+            body.append(text)
+            try:  # JSON escapes ("pri\u0076ate") decode server-side; match on the decoded form too
+                body.append(json.dumps(json.loads(text), ensure_ascii=False))
+            except ValueError:
+                pass
+        elif flag in {"-F", "--field"} and value.partition("=")[2].startswith("@"):
+            key, _, src = value.partition("=")
+            body.append(f"{key}={read_source(src[1:], stdin_body).strip()}")
+    if not GOES_PUBLIC.search("\n".join(body)):
+        return False, None, None
+    after = pos[pos.index("api") + 1:]
+    endpoint = after[0] if after else ""
+    if m := API_REPO.search(endpoint):
+        return True, m.group(1), None
+    if API_CURRENT_REPO.search(endpoint):
+        return True, None, None
+    return True, None, f"cannot tell which repo endpoint `{endpoint}` changes; use repos/OWNER/REPO"
+
+
+def public_flip(argv: list[str], stdin_body: bytes | None) -> tuple[bool, str | None, str | None]:
+    """(goes public?, owner/repo or None for the current directory's repo, refusal reason when the target is unclear).
+    Both checks run on every call, so an argv that looks like one command can't hide the other."""
+    for check in (api_flip, repo_edit_flip):
+        result = check(argv, stdin_body)
+        if result[0] or result[2]:
+            return result
+    return False, None, None
+
+
+def main(argv: list[str]) -> int:
+    stdin_body = sys.stdin.buffer.read() if reads_stdin(argv) else None
+    flip, repo, unclear = public_flip(argv, stdin_body)
+    if unclear:
+        print(f"[guard gh] REFUSED: public visibility change, but {unclear}; visibility unchanged", file=sys.stderr)
+        return 1
+    if flip:
+        print(f"[guard gh] public visibility change for {repo or 'the current repo'}: running the public-push gate", file=sys.stderr)
+        gate = subprocess.run([sys.executable, str(GATE), "--mode", "publicize", *(["--repo", repo] if repo else [])])
+        if gate.returncode != 0:
+            print("[guard gh] REFUSED: public-push gate did not pass; visibility unchanged", file=sys.stderr)
+            return gate.returncode or 1
+    gh = real_gh()
+    if stdin_body is None:
+        os.execv(gh, [gh, *argv])
+    return subprocess.run([gh, *argv], input=stdin_body).returncode
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1:]))

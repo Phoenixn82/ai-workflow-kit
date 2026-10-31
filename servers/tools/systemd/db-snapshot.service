@@ -1,0 +1,9 @@
+[Unit]
+Description=Consistent copies of loki's SQLite databases for the nightly pull (db-snapshot)
+OnFailure=alert@%n.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/db-snapshot /opt/homeserver/media/jellyfin/config /opt/homeserver/media/db-snapshots
+Nice=10
+IOSchedulingClass=idle

@@ -1,0 +1,78 @@
+#!/usr/bin/env bash
+# cx — the one way Claude dispatches Codex (audit 2026-10-12, Batch B0).
+# usage: cx <plan|check|build|task-class> <read-only|workspace-write|full> <outfile> <prompt...>
+#   plan|check|build use lanes codex.plan / codex.check / codex.build in _system/lanes.json; a task class (`route list`)
+#   uses its route's lane, which must be a codex.* lane (else exit 2: dispatch it through Agent/Workflow/lane).
+#   CX_DRY_RUN=1 prints the codex command instead of running it.
+#   CX_SESSION=new | <session id>: keep / resume a session (multi-round reviews); prompt "-" reads stdin. See below.
+# Always: explicit model, explicit sandbox, closed stdin (or codex hangs), output file, timeout, no MCP servers,
+# CLAUDE_SPAWN=1 so Codex session hooks skip the human ritual, Ponytail off.
+# --self-test: offline routing checks, then a 10 s live probe (--self-test offline skips the probe).
+set -euo pipefail
+# route sits beside cx (~/.local/bin/route, or the kit's harness/bin/route); CX_ROUTE overrides. route finds lanes.json
+# ($ROUTE_LANES, $KIT_HOME/framework/_system/lanes.json, ~/AI_Projects/_system/lanes.json; `route --lanes-path`).
+ROUTE=${CX_ROUTE:-$(dirname "$(readlink -f "$0")")/route}
+[[ -n ${CX_ROUTE:-} || -e $ROUTE ]] || ROUTE=$HOME/AI_Projects/_tools/lane-intel/route.py
+if [[ "${1:-}" == "--self-test" ]]; then
+  fail() { echo "cx self-test: $*"; exit 1; }
+  LJ=$(python3 "$ROUTE" --lanes-path) || fail "route --lanes-path failed"
+  [[ -f $LJ ]] || fail "no lanes.json at $LJ (set ROUTE_LANES to one, or KIT_HOME to the kit clone)"
+  lane() { python3 -c "import json,sys; l=json.load(open(sys.argv[2]))['lanes'][sys.argv[1]]; print(l['model'], l['effort'])" "$1" "$LJ"; }
+  for st in plan check build; do
+    read -r m e < <(lane "codex.$st")
+    got=$(CX_DRY_RUN=1 "$0" "$st" read-only /dev/null x) || fail "$st exited non-zero"
+    [[ $got == *"-m $m "*"model_reasoning_effort=\"$e\""* ]] || fail "$st did not use codex.$st ($m $e): $got"
+  done
+  cls=$(python3 -c "import json,sys; r=json.load(open(sys.argv[1]))['routes']; print(next(k for k,v in r.items() if not k.startswith('_') and v['lane'].startswith('codex.')))" "$LJ")
+  read -r m e < <(python3 "$ROUTE" --cx "$cls")
+  got=$(CX_DRY_RUN=1 "$0" "$cls" read-only /dev/null x) || fail "class $cls exited non-zero"
+  [[ $got == *"-m $m "*"model_reasoning_effort=\"$e\""* ]] || fail "class $cls did not use its route ($m $e): $got"
+  ncls=$(python3 -c "import json,sys; r=json.load(open(sys.argv[1]))['routes']; print(next(k for k,v in r.items() if not k.startswith('_') and not v['lane'].startswith('codex.')))" "$LJ")
+  set +e; err=$(CX_DRY_RUN=1 "$0" "$ncls" read-only /dev/null x 2>&1); rc=$?; err2=$(CX_DRY_RUN=1 "$0" no-such-class read-only /dev/null x 2>&1); rc2=$?; set -e
+  [[ $rc == 2 && $err == *"not a Codex lane"* ]] || fail "non-codex class $ncls: rc $rc: $err"
+  [[ $rc2 == 2 && $err2 == *"Classes:"* ]] || fail "unknown class: rc $rc2: $err2"
+  echo "cx self-test: routing ok (plan/check/build, $cls, refuses $ncls and unknown)"
+  got=$(CX_SESSION=new CX_DRY_RUN=1 "$0" plan read-only /tmp/o x)
+  [[ $got == *" --json "* && $got != *"--ephemeral"* && $got == *"-s read-only"* ]] || fail "CX_SESSION=new: $got"
+  u=0b5f4a6e-1c2d-4e3f-8a9b-0c1d2e3f4a5b; got=$(CX_SESSION=$u CX_DRY_RUN=1 "$0" plan read-only /tmp/o x)
+  [[ $got == "codex exec resume "*'sandbox_mode="read-only"'*" $u <prompt>" && $got != *" -s "* ]] || fail "CX_SESSION=<id>: $got"
+  got=$(CX_SESSION=$u CX_DRY_RUN=1 "$0" build full /tmp/o x); [[ $got == *"--dangerously-bypass-approvals-and-sandbox"* ]] || fail "resume full: $got"
+  set +e; CX_SESSION=garbage CX_DRY_RUN=1 "$0" plan read-only /tmp/o x 2>/dev/null; rc=$?; set -e; [[ $rc == 2 ]] || fail "bad CX_SESSION: rc $rc"
+  echo "cx self-test: sessions ok (new keeps the session, <id> resumes read-only via sandbox_mode, garbage refused)"
+  [[ "${2:-}" == "offline" ]] && exit 0
+  out=$(mktemp); "$0" check read-only "$out" "Reply with exactly: CX-OK" >/dev/null 2>&1 || { echo "cx self-test: codex exec failed"; exit 1; }
+  grep -q "CX-OK" "$out" && echo "cx self-test passed" || { echo "cx self-test: bad output: $(head -c 80 "$out")"; exit 1; }; rm -f "$out"; exit 0
+fi
+[[ $# -ge 4 ]] || { echo "usage: cx <plan|check|build|task-class> <read-only|workspace-write|full> <outfile> <prompt...>" >&2; exit 2; }
+stage=$1; sb=$2; out=$3; shift 3; prompt="$*"
+# model + effort come from the one lane table (audit 2026-10-12) via route.py; lane-intel keeps it current
+res=$(python3 "$ROUTE" --cx "$stage") || exit 2
+read -r model effort <<<"$res"
+case "$sb" in read-only|workspace-write) sbflag="-s $sb";; full) sbflag="--dangerously-bypass-approvals-and-sandbox";; *) echo "bad sandbox $sb" >&2; exit 2;; esac
+: "${CX_TIMEOUT:=1500}"
+# Sessions (the multi-round skills: codex-review, grill-*, codex-build): CX_SESSION=new keeps the session (no
+# --ephemeral) and writes its id to <outfile>.thread; CX_SESSION=<id> resumes it (codex exec resume takes no -s, so the
+# sandbox goes in as -c sandbox_mode). Either way the event stream lands in <outfile>.jsonl. A prompt of "-" is read
+# from stdin (cx ... out - < prompt.md); any other prompt runs with stdin closed.
+sess=${CX_SESSION:-}
+sub=(exec); pos=("$prompt"); tail=(--ephemeral); read -ra sbx <<<"$sbflag"
+if [[ -n $sess ]]; then
+  tail=(--json)
+  if [[ $sess != new ]]; then
+    [[ $sess =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]] || { echo "cx: CX_SESSION must be new or a session id (uuid), got '$sess'" >&2; exit 2; }
+    sub=(exec resume); pos=("$sess" "$prompt"); [[ $sb == full ]] || sbx=(-c "sandbox_mode=\"$sb\"")
+  fi
+fi
+cmd=(codex "${sub[@]}" -m "$model" -c "model_reasoning_effort=\"$effort\"" -c 'mcp_servers={}' -c 'plugins={}' "${sbx[@]}" --skip-git-repo-check "${tail[@]}" --output-last-message "$out")
+if [[ -n "${CX_DRY_RUN:-}" ]]; then echo "${cmd[*]} ${pos[*]:0:${#pos[@]}-1} <prompt>" | sed 's/  */ /g'; exit 0; fi
+[[ $prompt == - ]] || exec < /dev/null
+run() { CLAUDE_SPAWN=1 PONYTAIL_DEFAULT_MODE=off timeout "$CX_TIMEOUT" "${cmd[@]}" "${pos[@]}"; }
+[[ -n $sess ]] || { run; exit; }
+rc=0; run > "$out.jsonl" || rc=$?
+id=$(grep -o '"thread_id":"[^"]*"' "$out.jsonl" | head -1 | cut -d'"' -f4 || true)
+if [[ $sess != new && -n $id && $id != "$sess" ]]; then
+  echo "cx: asked to resume $sess but codex ran session $id; treat this round as failed" >&2; exit 3
+fi
+id=${id:-$([[ $sess == new ]] || echo "$sess")}
+[[ -n $id ]] && { echo "$id" > "$out.thread"; echo "cx: session $id (exit $rc)" >&2; }
+exit "$rc"

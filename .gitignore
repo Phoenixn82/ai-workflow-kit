@@ -1,0 +1,61 @@
+# Defensive — never let a future sync leak private data into this shared repo.
+# The sync tooling also guards against these, but git ignores them as a hard backstop.
+
+# Secrets / credentials
+*.env
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+*.p12
+*.pfx
+.secrets/
+**/secret-store/secrets/
+*_token*
+*.credentials
+
+# Vault / second-brain CONTENT (the data is private). NOTE: the second-brain *skill*
+# at framework/_system/skills/second-brain/ is shippable machinery and must NOT be ignored.
+framework/_system/second-brain/
+**/claude_vault/
+**/voice-corpus/
+
+# AI auth/config
+.codex/
+**/.codex/
+
+# Runtime logs / state
+*.log
+.claude-codex-log.md
+.codex-session-changes/
+.codex-claude-handoff/
+pipeline/goal-runs/
+
+# Maintainer-only public push gate local policy.
+**/denylist.local*.json
+
+# Maintainer-only privacy scrub rules.
+tools/scrub-rules.local.json
+
+# OS / editor cruft
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Sync working dirs
+tools/_staging/
+_stage/
+kit-stage-*/
+
+# Never ship runtime data
+*.db
+*.sqlite*
+*.jsonl
+__pycache__/
+.venv/
+node_modules/
+*.bak*
+
+# A tool's data file that sync-kit ships on purpose (KEEP_FILES): the secret-firewall corpus holds {{PLACEHOLDERS}}, not logs.
+!framework/_tools/secret-firewall-corpus/corpus.jsonl

@@ -1,0 +1,30 @@
+# raven: ~/.ssh/config for the fleet (profiles/raven/README.md). Copy the blocks you need into ~/.ssh/config:
+#   mkdir -p ~/.ssh && chmod 700 ~/.ssh && touch ~/.ssh/config && chmod 600 ~/.ssh/config
+# Names are tailnet names (MagicDNS): Tailscale SSH answers port 22 on every Linux/macOS box, so there are no keys
+# to copy for you. Delete the boxes you do not have.
+
+Host odin thor heimdall loki
+  # your login on those boxes
+  User you
+  # notice a dead link in about a minute instead of hanging
+  ServerAliveInterval 30
+  ServerAliveCountMax 3
+  # keep one connection per box open for a while: a second ssh, scp or rsync starts instantly
+  ControlMaster auto
+  ControlPath ~/.ssh/cm-%r@%h:%p
+  ControlPersist 10m
+
+# thor sleeps when idle: wake it first with thor-up (it reads THOR_HOST and THOR_MAC from hosts.env), e.g.
+#   thor-up && ssh thor
+Host thor
+  ConnectTimeout 10
+
+# A port forward for a web UI that listens on 127.0.0.1 only, e.g. FreeLLMAPI's dashboard:
+#   ssh -N thor-dash, then open http://localhost:3001
+Host thor-dash
+  HostName thor
+  User you
+  LocalForward 3001 127.0.0.1:3001
+
+# Long, roaming sessions (train Wi-Fi, a laptop lid closing): mosh plus tmux, e.g.
+#   mosh odin -- tmux new -A -s main

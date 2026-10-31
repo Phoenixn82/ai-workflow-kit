@@ -1,0 +1,17 @@
+# /etc/homeserver/media-backup.conf (root-owned, mode 644; no secrets here, the password lives in PASSWORD_FILE)
+# Folders to back up, space-separated (no spaces inside a path; use a parent folder instead)
+MEDIA_DIRS="/srv/media"
+# The restic repository, on a different drive than MEDIA_DIRS
+REPO=/srv/backup-disk/media
+# restic password, mode 600. Keep a copy somewhere else (your laptop's password manager): without it the repo is lost
+PASSWORD_FILE=/root/.config/restic/media.pass
+# Must be mounted, or the run stops before it backs up an empty folder
+MOUNTS="/srv/media /srv/backup-disk"
+# Must not be empty (a disk that mounted empty, or a renamed folder)
+MUST_HAVE="/srv/media/Photos"
+EXCLUDES="/srv/media/lost+found"
+KEEP="--keep-daily 7 --keep-weekly 8 --keep-monthly 12"
+# Immich on this box: dump its database before each snapshot. Empty: no Immich.
+IMMICH_DB=immich_postgres
+IMMICH_DB_USER=postgres
+DUMPS=/var/lib/immich/db-dumps

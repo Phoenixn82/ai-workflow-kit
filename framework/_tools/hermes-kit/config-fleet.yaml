@@ -1,0 +1,76 @@
+# >>> ai-workflow-kit hermes >>>
+# Trusted router profiles only; each model has a 64k context ceiling.
+providers:
+  freellm:
+    api: "@ROUTER_URL@"
+    key_cmd: "@KEY_CMD@"
+    transport: chat_completions
+    models:
+      auto:code-biz: {context_length: 65536}
+      auto:checker-biz: {context_length: 65536}
+      auto:writer-biz: {context_length: 65536}
+      auto:ops-biz: {context_length: 65536}
+      auto:quick-biz: {context_length: 65536}
+  thor:
+    api: "@OLLAMA_URL@"
+    transport: chat_completions
+    models:
+      "@LOCAL_MODEL@": {context_length: 65536}
+
+# Tried in order when the current model rate-limits, errors or returns garbage; history carries over.
+fallback_providers:
+  - provider: custom:freellm
+    model: auto:checker-biz
+  - provider: custom:freellm
+    model: auto:ops-biz
+  - provider: custom:thor
+    model: "@LOCAL_MODEL@"
+
+# /model <alias> switches mid-session, context kept. Vetted pools only.
+model_aliases:
+  code: {provider: "custom:freellm", model: "auto:code-biz"}
+  check: {provider: "custom:freellm", model: "auto:checker-biz"}
+  write: {provider: "custom:freellm", model: "auto:writer-biz"}
+  ops: {provider: "custom:freellm", model: "auto:ops-biz"}
+  quick: {provider: "custom:freellm", model: "auto:quick-biz"}
+  local: {provider: "custom:thor", model: "@LOCAL_MODEL@"}
+
+# Side jobs see the conversation too, so they are pinned to the vetted pools (default "auto" could pick others).
+auxiliary:
+  # Screenshots and images: local Qwen3.6 (vision), so images never leave the fleet.
+  vision:
+    provider: custom
+    base_url: "@OLLAMA_URL@"
+    api_key: ollama
+    model: "@LOCAL_MODEL@"
+    timeout: 300
+  compression: {provider: freellm, model: "auto:code-biz"}
+  web_extract: {provider: freellm, model: "auto:quick-biz"}
+  title_generation: {provider: freellm, model: "auto:quick-biz"}
+  session_search: {provider: freellm, model: "auto:quick-biz"}
+  curator: {provider: freellm, model: "auto:quick-biz"}
+  background_review: {provider: freellm, model: "auto:checker-biz"}
+
+# Outside workers receive scrubbed task text only.
+mcp_servers:
+  helper-wall:
+    command: "@HELPER_WALL@"
+    timeout: 1800
+    env:
+      HELPER_API: "@ROUTER_URL@"
+      HELPER_KEY_FILE: "~/.config/ai-workflow-kit/freellmapi.key"
+      HELPER_DENYLIST: "~/.config/ai-workflow-kit/helper-denylist.json"
+  # Optional local MCPs; install and review each before enabling it.
+  # computer-use-linux:
+  #   command: computer-use-linux
+  #   args: [mcp]
+  # firefox-devtools:
+  #   command: firefox-devtools-mcp
+  # chrome-devtools:
+  #   command: chrome-devtools-mcp
+
+timeouts:
+  tools:
+    sequential_call: 1800
+    concurrent_batch: 1800
+# <<< ai-workflow-kit hermes <<<

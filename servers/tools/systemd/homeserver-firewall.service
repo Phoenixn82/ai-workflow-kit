@@ -1,0 +1,20 @@
+# Loads /etc/homeserver/firewall.nft (written by setup.sh). It only touches its own table,
+# so Docker's and Tailscale's rules survive a reload (Debian's stock nftables.conf flushes everything).
+# A changed file: reload, never restart (setup.sh --confirm-firewall reloads). The file deletes and re-adds the table in
+# one transaction, so a reload never leaves the box without it; a restart runs ExecStop first, which does.
+[Unit]
+Description=Home server firewall (nftables table inet homeserver)
+Wants=network-pre.target
+Before=network-pre.target
+DefaultDependencies=no
+After=local-fs.target nftables.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/sbin/nft -f /etc/homeserver/firewall.nft
+ExecReload=/usr/sbin/nft -f /etc/homeserver/firewall.nft
+ExecStop=/usr/sbin/nft delete table inet homeserver
+
+[Install]
+WantedBy=multi-user.target

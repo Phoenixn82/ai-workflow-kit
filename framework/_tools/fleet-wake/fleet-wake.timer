@@ -1,0 +1,10 @@
+[Unit]
+Description=Check Odin and Thor for unexpected outages
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=2min
+AccuracySec=30s
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,14 @@
+[project]
+name = "desk-control"
+version = "0.1.0"
+description = "Visible, local Omarchy desktop control for Codex and Claude"
+requires-python = ">=3.12,<3.13"
+dependencies = ["mcp>=1.28,<2", "pillow>=11,<13"]
+
+[dependency-groups]
+dev = ["pytest>=8,<10"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+# firefox-mcp/test_new_page.py is a manual script that launches headless Zen at import.
+testpaths = ["tests"]

@@ -1,0 +1,77 @@
+# Immich (optional): your own photo and video library on thor, with phone backup, face and object search.
+# Based on Immich's v3.3.3 release docker-compose.yml. Images pinned: bump all four together, and read the release
+# notes first (https://github.com/immich-app/immich/releases): Immich has breaking changes between versions.
+#
+# Storage layout (all from .env):
+#   UPLOAD_LOCATION     originals of phone uploads: put it inside the media folder media-backup copies
+#   CACHE_LOCATION      thumbnails and re-encoded video: fast local disk, can be rebuilt, no backup needed
+#   DB_DATA_LOCATION    Postgres: local SSD, never a network share; media-backup dumps it every night
+#   EXTERNAL_LIBRARY    your existing photo folder, mounted READ-ONLY (Immich indexes it, never changes it)
+#
+# Start:   cp env.example .env && chmod 600 .env   (fill it in)   then   docker compose up -d
+# Tailnet only: it listens on 127.0.0.1:2283. Share it with the tailnet (never Funnel):
+#   sudo tailscale serve --bg --tcp=2283 tcp://127.0.0.1:2283
+# CPU is capped (cpus, low cpu_shares) so the first thumbnail and machine-learning pass over a big library cannot
+# overheat the box; host-heat still watches. Kill switch: docker compose down (your files stay where they are).
+name: immich
+services:
+  immich-server:
+    container_name: immich_server
+    image: ghcr.io/immich-app/immich-server:v3.3.3
+    volumes:
+      - ${UPLOAD_LOCATION:?set UPLOAD_LOCATION in .env}:/data
+      - ${CACHE_LOCATION:?set CACHE_LOCATION in .env}/thumbs:/data/thumbs
+      - ${CACHE_LOCATION}/encoded-video:/data/encoded-video
+      - type: bind
+        source: ${EXTERNAL_LIBRARY:?set EXTERNAL_LIBRARY in .env}
+        target: /external/library
+        read_only: true
+      - /etc/localtime:/etc/localtime:ro
+    env_file:
+      - .env
+    ports:
+      - '127.0.0.1:2283:2283'
+    depends_on:
+      - redis
+      - database
+    restart: always
+    cpus: 3
+    cpu_shares: 256
+    healthcheck:
+      disable: false
+  immich-machine-learning:
+    container_name: immich_machine_learning
+    image: ghcr.io/immich-app/immich-machine-learning:v3.3.3
+    volumes:
+      - model-cache:/cache
+    env_file:
+      - .env
+    restart: always
+    cpus: 2
+    cpu_shares: 256
+    healthcheck:
+      disable: false
+  redis:
+    container_name: immich_redis
+    # pinned by digest, as Immich ships it (Valkey 9.1.2 when this was written)
+    image: docker.io/valkey/valkey:9@sha256:c123e3715db63d06d4ad6964884037aa0d5d4d703939b9929954112889708e1d
+    healthcheck:
+      test: redis-cli ping | grep -q PONG || exit 1
+    restart: always
+  database:
+    container_name: immich_postgres
+    # pinned by digest, as Immich ships it (PostgreSQL 14.19 with VectorChord 0.4.3)
+    image: ghcr.io/immich-app/postgres:14-vectorchord0.4.3-pgvectors0.2.0@sha256:bcf63357191b76a916ae5eb93464d65c07511da41e3bf7a8416db519b40b1c23
+    environment:
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD in .env}
+      POSTGRES_USER: ${DB_USERNAME:-postgres}
+      POSTGRES_DB: ${DB_DATABASE_NAME:-immich}
+      POSTGRES_INITDB_ARGS: '--data-checksums'
+    volumes:
+      - ${DB_DATA_LOCATION:?set DB_DATA_LOCATION in .env}:/var/lib/postgresql/data
+    shm_size: 128mb
+    restart: always
+    healthcheck:
+      disable: false
+volumes:
+  model-cache:

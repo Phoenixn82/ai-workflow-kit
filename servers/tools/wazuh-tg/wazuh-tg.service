@@ -1,0 +1,17 @@
+# /etc/systemd/system/wazuh-tg.service on heimdall. Settings: /etc/wazuh-tg/env (see the top of wazuh-tg).
+# Kill switch: sudo touch /var/lib/wazuh-tg/HALT, or sudo systemctl disable --now wazuh-tg
+[Unit]
+Description=Send serious Wazuh alerts (level 12+) to your phone
+After=docker.service
+
+[Service]
+EnvironmentFile=-/etc/wazuh-tg/env
+ExecStart=/usr/local/bin/wazuh-tg
+Restart=always
+RestartSec=30
+Nice=10
+NoNewPrivileges=yes
+StateDirectory=wazuh-tg
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,9 @@
+# heimdall: nomic-embed-text:latest for vault-rag. Same weights blob as thor (sha256 970aa74c...), so vectors match the
+# existing index. FROM the pristine v1.5 tag (identical to the original :latest), as on thor
+# (_tools/fleet-wake/thor/nomic-embed-text-cpu.Modelfile), so no stale PARAMETER is inherited.
+# num_thread 3 = the container's --cpus 3 quota (4 threads under a 3-CPU quota stall at every barrier).
+# num_batch 2048: an embed input longer than num_batch is truncated; vault-rag chunks are <= ~2,100 chars
+# (MAX_SECTION 2000 + context line), well under 2048 tokens, nomic's trained context.
+FROM nomic-embed-text:v1.5
+PARAMETER num_thread 3
+PARAMETER num_batch 2048

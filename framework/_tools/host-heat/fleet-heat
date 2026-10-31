@@ -1,0 +1,280 @@
+#!/usr/bin/env python3
+"""fleet-heat: pull every host's thermals, alert on level changes, 6-hourly summary. Runs on heimdall
+(moved from odin 2026-10-12 so it keeps watching while odin/thor sleep).
+  fleet-heat --collect   (systemd user timer, every 5 min) pull `host-heat --json` from odin, heimdall,
+                         raven (offline hosts are skipped silently; a host whose fleet-wake state is "hold",
+                         i.e. asleep on purpose, is not even contacted); Telegram on any level CHANGE per host
+                         (numbers + the action taken, max one per host per 10 min, EMERG always at once),
+                         on a host that vanished while HOT, and the summary at 00/06/12/18 local
+  fleet-heat --report    send the summary of all hosts (incl. thor, via `thor-heat`) now
+  fleet-heat --show      print the summary, send nothing
+  fleet-heat --test HOST send HOST's test message now (HOST = odin|heimdall|raven)
+  --dry-run              print messages instead of sending; state is not saved (unless FLEET_HEAT_STATE=dir
+                         is set, for tests)
+  --from HOST=file.json  use a saved `host-heat --json` instead of pulling (for tests)
+loki is not watched: heimdall's se_guard firewall drops loki by design (loki's own host-heat still cools
+and shuts it down locally). Telegram: via /usr/local/bin/tg (alerts/tests -> topic heat, which buzzes; the
+summary -> topic fleet, silent); without the bot token on this host, via `ssh thor 'sudo -n
+thor-heat --say'`. ssh uses ~/.config/fleet-heat/ssh_config when present (restricted fleet-heat key).
+Stop: systemctl --user disable --now fleet-heat.timer, or create the automations HALT file.
+Unsent messages wait in the outbox for up to 3 h. Quiet windows (~/.config/fleet-heat/quiet.json)
+keep this off named hosts, e.g. [{"hosts": ["thor"], "from": "2026-01-01T01:00", "to": "2026-01-01T03:00"}]."""
+import json
+import os
+import re
+import socket
+import subprocess
+import sys
+import time
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime
+
+HOSTS = ["odin", "heimdall", "raven"]
+UNWATCHED = {"loki": "heimdall's se_guard blocks it by design"}
+ME = socket.gethostname().split(".")[0].lower()
+SSH_CFG = os.path.expanduser("~/.config/fleet-heat/ssh_config")
+SSH = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=6", "-o", "ServerAliveInterval=4", "-o", "ServerAliveCountMax=2"] \
+    + (["-F", SSH_CFG] if os.path.exists(SSH_CFG) else [])
+WAKE_DIR = os.path.expanduser("~/.local/state/fleet-wake")  # heimdall's fleet-wake: "hold" = asleep on purpose
+TG_TOKEN = os.path.expanduser("~/telegram-bot.token")
+STATE_DIR = os.environ.get("FLEET_HEAT_STATE") or os.path.expanduser("~/.local/state/fleet-heat")
+HALT_FILES = [__import__('os').path.expanduser("~/AI_Projects/_system/automations/HALT"), STATE_DIR + "/HALT"]
+QUIET = os.path.expanduser("~/.config/fleet-heat/quiet.json")
+NAMES = ["OK", "WARN", "HOT", "EMERG"]
+MIN_GAP = 600        # seconds between alerts for one host (EMERG excepted)
+OUTBOX_TTL = 3 * 3600
+SLOTS = (0, 6, 12, 18)
+LABEL = {"cpu": "CPU", "gpu": "GPU", "nvme": "NVMe", "ssd": "SSD", "batt": "battery"}
+
+
+def hhmm(ts):
+    return datetime.fromtimestamp(ts).strftime("%H:%M")
+
+
+def quiet(host, now):
+    try:
+        for w in json.load(open(QUIET)):
+            if host in w["hosts"] and datetime.fromisoformat(w["from"]).timestamp() <= now < datetime.fromisoformat(w["to"]).timestamp():
+                return True
+    except (OSError, ValueError, KeyError):
+        pass
+    return False
+
+
+def held(host):
+    """True while fleet-wake records the host as deliberately asleep: do not contact (or wake) it."""
+    try:
+        return open(f"{WAKE_DIR}/{host}").read().strip() == "hold"
+    except OSError:
+        return False
+
+
+def pull(host, now, canned):
+    if host in canned:
+        try:
+            return json.load(open(canned[host]))
+        except (OSError, ValueError):
+            return None
+    if quiet(host, now) or held(host):
+        return None
+    cmd = ["/usr/local/bin/host-heat", "--json"] if host == ME else SSH + [host, "/usr/local/bin/host-heat --json"]
+    try:
+        return json.loads(subprocess.run(cmd, capture_output=True, text=True, timeout=25).stdout)
+    except (OSError, subprocess.TimeoutExpired, ValueError):
+        return None
+
+
+def pull_thor(now):
+    """thor-heat prints 'OK    NN.NC  GPU' lines and a Fans: line -> compact text and worst level."""
+    if quiet("thor", now) or held("thor"):
+        return None
+    try:
+        out = subprocess.run(SSH + ["thor", "/usr/local/bin/thor-heat"], capture_output=True, text=True, timeout=25).stdout
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    got = {}
+    lvl = 0
+    for m in re.finditer(r"^(OK|WARM|HOT)\s+([\d.]+)C\s+(.+)$", out, re.M):
+        name = m.group(3)
+        k = "GPU" if re.search(r"GTX|RTX|GPU", name) else "CPU" if name.startswith("CPU") else \
+            "case" if name.startswith("Case") else "disk"
+        got.setdefault(k, []).append(f"{float(m.group(2)):.0f}")
+        lvl = max(lvl, ["OK", "WARM", "HOT"].index(m.group(1)))
+    if not got:
+        return None
+    fans = re.search(r"^Fans: (.*)$", out, re.M)
+    rpm = "/".join(re.findall(r"(\d+)rpm", fans.group(1))) if fans else ""
+    return {"lvl": lvl, "text": "  ".join(f"{k} {'/'.join(v)}C" for k, v in got.items()) + (f" | fans {rpm}rpm" if rpm else "")}
+
+
+def say(text, loud=True):
+    """True once Telegram accepted it. Sent from this host via tg when it holds the bot token (no dependency on
+    thor being awake): loud -> topic heat (buzzes), loud=False -> topic fleet (silent). Else thor's own sender (always loud)."""
+    if os.path.exists(TG_TOKEN):
+        try:
+            return subprocess.run(["/usr/local/bin/tg", "heat" if loud else "fleet", text], capture_output=True,
+                                  timeout=45).returncode == 0
+        except (OSError, subprocess.TimeoutExpired):
+            return False
+    try:
+        p = subprocess.run(SSH + ["thor", "sudo -n /usr/local/bin/thor-heat --say"], input=text, text=True,
+                           capture_output=True, timeout=45)
+        return p.returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
+def compact(snap):
+    groups = {}
+    for s in snap["sensors"]:
+        if s["lim"]:
+            groups.setdefault(LABEL.get(s["kind"], s["name"]), []).append(f"{s['t']:.0f}")
+    fans = "/".join(str(v) for v in snap["fans"].values() if v)
+    return "  ".join(f"{k} {'/'.join(v)}C" for k, v in groups.items()) + (f" | fans {fans}rpm" if fans else "")
+
+
+def numbers(snap):
+    """Sensors that are not OK, with their limits; else the compact line."""
+    bad = [f"{s['name']} {s['t']:.0f}C ({NAMES[s['lvl']]}; warn {s['lim'][0]}, hot {s['lim'][1]}"
+           + (f", shutdown {s['lim'][2]})" if s["lim"][2] else ")")
+           for s in snap["sensors"] if s["lim"] and s.get("lvl")]
+    return "\n".join(bad + [compact(snap)])
+
+
+def alert_text(host, snap, was, acts):
+    lines = [f"{host} heat: {NAMES[snap['level']]} (was {NAMES[was]})", numbers(snap)]
+    lines += [f"Action {hhmm(ts)}: {text}" for ts, _, text in acts]
+    if snap["mit"].get("active") and not acts:
+        lines.append(f"Cooling is on since {hhmm(snap['mit']['since'])}.")
+    return "\n".join(lines)
+
+
+def test_text(host, snap):
+    lim = "; ".join(f"{LABEL.get(s['kind'], s['name'])} warn {s['lim'][0]}/hot {s['lim'][1]}"
+                    + (f"/shutdown {s['lim'][2]}" if s["lim"][2] else "") for s in snap["sensors"] if s["lim"])
+    return f"{host} heat watch test: {NAMES[snap['level']]}\n{compact(snap)}\nLimits: {lim}"
+
+
+def summary(snaps, thor, last_seen):
+    out = [f"Fleet thermals {datetime.now().astimezone():%a %H:%M %Z}"]
+    if thor:
+        out.append(f"thor: {['OK', 'WARM', 'HOT'][thor['lvl']]}\n  {thor['text']}")
+    else:
+        out.append("thor: asleep (fleet-wake hold)" if held("thor") else "thor: no answer")
+    for h in HOSTS:
+        s = snaps.get(h)
+        if not s and held(h):
+            out.append(f"{h}: asleep (fleet-wake hold)")
+        elif s:
+            stale = s["ts"] and s["now"] - s["ts"] > 900
+            out.append(f"{h}: {NAMES[s['level']]}{' (cooling on)' if s['mit'].get('active') else ''}"
+                       f"{' (agent stale ' + str((s['now'] - s['ts']) // 60) + ' min)' if stale else ''}"
+                       f"{' (not installed)' if not s['ts'] else ''}\n  {compact(s)}")
+        else:
+            out.append(f"{h}: no answer" + (f" (last seen {hhmm(last_seen[h])})" if last_seen.get(h) else ""))
+    out += [f"{h}: not watched ({why})" for h, why in UNWATCHED.items()]
+    return "\n".join(out)
+
+
+def load():
+    try:
+        return json.load(open(STATE_DIR + "/state.json"))
+    except (OSError, ValueError):
+        return {}
+
+
+def main(argv):
+    now = time.time()
+    dry = "--dry-run" in argv
+    canned = dict(x.split("=", 1) for x in [argv[i + 1] for i, a in enumerate(argv[:-1]) if a == "--from"])
+    if any(os.path.exists(p) for p in HALT_FILES) and "--collect" in argv:
+        return
+    st = load()
+    hosts_st = st.setdefault("hosts", {})
+    outbox = [m for m in st.get("outbox", []) if now - m["ts"] < OUTBOX_TTL]
+    sent = st.setdefault("sent", {"alert": 0, "summary": 0, "test": 0})
+    with ThreadPoolExecutor(4) as ex:
+        snaps = dict(zip(HOSTS, ex.map(lambda h: pull(h, now, canned), HOSTS)))
+    last_seen = {h: v.get("seen") for h, v in hosts_st.items()}
+    thor = lambda: pull_thor(now)  # only asked for when a summary is built
+
+    def queue(kind, text):
+        outbox.append({"ts": int(now), "kind": kind, "text": text})
+
+    if "--show" in argv:
+        print(summary(snaps, thor(), last_seen))
+        return
+    if "--test" in argv:
+        h = argv[argv.index("--test") + 1]
+        if snaps.get(h):
+            hosts_st.setdefault(h, {})["test_done"] = snaps[h]["test"]
+            queue("test", test_text(h, snaps[h]))
+        else:
+            sys.exit(f"{h}: no answer from host-heat")
+    if "--report" in argv:
+        queue("summary", summary(snaps, thor(), last_seen))
+    if "--collect" in argv:
+        for h, snap in snaps.items():
+            hs = hosts_st.setdefault(h, {})
+            if snap is None and (quiet(h, now) or held(h)):
+                print(f"{h}: skipped ({'fleet-wake hold, asleep on purpose' if held(h) else 'quiet window'})")
+                continue
+            if snap is None:
+                hs["misses"] = hs.get("misses", 0) + 1
+                print(f"{h}: no answer (miss {hs['misses']}), skipped")
+                if hs["misses"] >= 2 and hs.get("level", 0) >= 2 and not hs.get("gone"):
+                    hs["gone"] = True
+                    queue("alert", f"{h} heat: no answer since {hhmm(hs.get('seen', now))}, last level {NAMES[hs['level']]}. "
+                                   "Possible thermal shutdown (or sleep/offline); details when it is back.")
+                continue
+            print(f"{h}: {NAMES[snap['level']]}  {compact(snap)}")
+            back = now - hs.get("seen", now) > 600  # first answer after sleep/absence: host-heat may not have run yet
+            hs.update(misses=0, seen=int(now), level=snap["level"])
+            evs = snap["events"]
+            if hs.get("gone"):
+                hs["gone"] = False
+                sd = [e for e in evs if "SHUTTING DOWN" in e[2] and e[0] > hs.get("ev_ts", 0)]
+                queue("alert", f"{h} is back. " + (f"host-heat powered it off at {hhmm(sd[-1][0])}: {sd[-1][2]}" if sd else "No thermal shutdown recorded."))
+            if "alerted" not in hs:  # first sight: baseline, so rollout never pages for a calm host
+                hs.update(alerted=snap["level"] if snap["level"] < 2 else 0, alert_ts=0, ev_ts=max([e[0] for e in evs], default=0) if snap["level"] < 2 else 0)
+            if snap["level"] != hs["alerted"] and (now - hs.get("alert_ts", 0) >= MIN_GAP or snap["level"] == 3):
+                acts = [e for e in evs if e[1] == "act" and e[0] > hs["ev_ts"]]
+                queue("alert", alert_text(h, snap, hs["alerted"], acts))
+                hs.update(alerted=snap["level"], alert_ts=int(now), ev_ts=max([e[0] for e in evs], default=hs["ev_ts"]))
+            elif snap["level"] == hs["alerted"]:  # nothing pending: older actions must not ride on a later alert
+                hs["ev_ts"] = max([e[0] for e in evs] + [hs["ev_ts"]])
+            if snap["ts"] and snap["now"] - snap["ts"] > 900 and not hs.get("stale") and not back:
+                hs["stale"] = True
+                queue("alert", f"{h} heat: host-heat has not run for {(snap['now'] - snap['ts']) // 60} min (timer stopped or host busy).")
+            elif snap["ts"] and snap["now"] - snap["ts"] <= 900:
+                hs["stale"] = False
+            if snap["test"] and snap["test"] > hs.get("test_done", 0):
+                hs["test_done"] = snap["test"]
+                queue("test", test_text(h, snap))
+        slot = max((datetime.now().replace(hour=s, minute=0, second=0, microsecond=0) for s in SLOTS if datetime.now().hour >= s)).timestamp()
+        if st.get("slot") is None:
+            st["slot"] = slot  # first run: nothing is "due"; the next slot sends
+        elif slot > st["slot"] and now - slot < 7200:
+            queue("summary", summary(snaps, thor(), last_seen))
+            st["slot"] = slot
+        elif slot > st["slot"]:
+            st["slot"] = slot  # slot passed while off by more than 2 h: skip rather than send stale data
+    keep = []
+    for m in outbox:
+        if dry:
+            print(f"--- would send ({m['kind']}):\n{m['text']}\n")
+        elif say(m["text"], loud=m["kind"] != "summary"):
+            sent[m["kind"]] += 1
+            with open(STATE_DIR + "/sent.log", "a") as f:
+                f.write(f"{datetime.now().isoformat(timespec='seconds')} {m['kind']} {m['text'].splitlines()[0]}\n")
+        else:
+            keep.append(m)
+    if not dry or os.environ.get("FLEET_HEAT_STATE"):
+        st["outbox"] = keep
+        os.makedirs(STATE_DIR, exist_ok=True)
+        json.dump(st, open(STATE_DIR + "/state.tmp", "w"))
+        os.replace(STATE_DIR + "/state.tmp", STATE_DIR + "/state.json")
+
+
+if __name__ == "__main__":
+    main(sys.argv[1:])

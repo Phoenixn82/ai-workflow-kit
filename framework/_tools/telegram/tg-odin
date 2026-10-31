@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# tg thin client for odin (installed as ~/.local/bin/tg): the real tg and the bot token live on heimdall.
+# Same arguments as heimdall's /usr/local/bin/tg. Not for thor: thor's key on heimdall is forced to
+# "fleet-wake hold thor", so thor-heat / heimdall-watch send directly and read a copy of topics.json.
+set -uo pipefail
+t=60; [[ ${1:-} == --discover || ${1:-} == --claim ]] && t=300  # ponytail: discover/claim wait for you to post
+timeout -s KILL $t ssh -o BatchMode=yes -o ConnectTimeout=10 heimdall "/usr/local/bin/tg $(printf '%q ' "$@")"
+rc=$?
+if [[ $rc == 0 && ( ${1:-} == --discover || ${1:-} == --claim ) ]]; then
+  j=$(ssh -o BatchMode=yes heimdall cat .config/telegram/topics.json) &&
+    ssh -o BatchMode=yes -o ConnectTimeout=10 thor 'umask 077; mkdir -p .config/telegram && cat > .config/telegram/topics.tmp && mv .config/telegram/topics.tmp .config/telegram/topics.json' <<<"$j" &&
+    echo "topic map copied to thor (thor-heat, heimdall-watch)" ||
+    echo "thor not reachable: run 'tg --discover' again (or re-run install.sh) once thor is up" >&2
+fi
+exit $rc

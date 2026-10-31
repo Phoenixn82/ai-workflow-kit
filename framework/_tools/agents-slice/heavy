@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+# heavy: run one heavy command (yt-dlp, ffmpeg, whisper, gitleaks, renders) in its own transient scope
+# inside agents.slice, capped at CPUQuota=400% and Nice=10 (or the caller's nice, if higher). TTY, cwd, env and exit code pass through.
+#   heavy <cmd...>   heavy --dry-run <cmd...>   heavy --self-test
+set -u
+level=$(nice); [ "$level" -gt 10 ] || level=10   # never below the caller's nice: lowering it needs CAP_SYS_NICE
+cmd=(systemd-run --user --scope --slice=agents.slice --unit="heavy-$$" --collect --quiet -p CPUQuota=400% --nice="$level" --)
+
+case "${1:-}" in
+  ''|-h|--help) sed -n 2,4p "$0"; exit 2 ;;
+  --dry-run) shift; printf '%q ' "${cmd[@]}" "$@"; echo; exit 0 ;;
+  --self-test)
+    s=$(readlink -f "$0")  # absolute: the cwd check below runs from another dir
+    fail=0; ok() { if eval "$2"; then echo "PASS $1"; else echo "FAIL $1"; fail=1; fi; }
+    "$s" sh -c 'exit 5'; rc=$?
+    ok "exit code 5 preserved (got $rc)" '[ "$rc" = 5 ]'
+    want=$(( $(nice) > 10 ? $(nice) : 10 ))   # computed apart from $level so a lost floor fails here
+    n=$("$s" nice); ok "nice $want (got $n)" '[ "$n" = "$want" ]'
+    d=$(mktemp -d); trap 'rm -rf "$d"' EXIT
+    ok "cwd preserved" '[ "$(cd "$d" && "$s" pwd)" = "$d" ]'
+    # 8 busy threads for 3 s: usage must stay near 4 cores and the scope must report throttling
+    out=$("$s" sh -c 'f=/sys/fs/cgroup$(cut -d: -f3 /proc/self/cgroup)/cpu.stat
+      s=$(grep usage_usec "$f" | cut -d" " -f2); t0=$(date +%s%N)
+      for i in 1 2 3 4 5 6 7 8; do timeout 3 sh -c "while :; do :; done" & done; wait
+      e=$(grep usage_usec "$f" | cut -d" " -f2); t1=$(date +%s%N)
+      echo "$(( (e - s) * 100000 / (t1 - t0) )) $(grep nr_throttled "$f" | cut -d" " -f2) $(cut -d: -f3 /proc/self/cgroup)"')
+    read -r pct thr cg <<<"$out"
+    ok "8-thread burn capped: ${pct}% of one core, nr_throttled=$thr" '[ "$pct" -le 440 ] && [ "$thr" -gt 0 ]'
+    ok "scope in agents.slice ($cg)" '[[ "$cg" == */agents.slice/heavy-*.scope ]]'
+    exit $fail ;;
+esac
+exec "${cmd[@]}" "$@"

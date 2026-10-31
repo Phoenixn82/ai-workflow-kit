@@ -1,0 +1,97 @@
+#!/usr/bin/env bash
+# media-backup: nightly restic snapshot of your photos and videos onto a second drive in the same box (thor), plus a
+# consistent dump of Immich's database when Immich runs here. Two copies on two drives; your off-box backups are
+# a separate job. Root timer media-backup.timer (03:40, WakeSystem: wakes a sleeping thor; thor-sleep counts restic
+# as busy, so it never suspends mid-run).
+#
+# Config: /etc/homeserver/media-backup.conf (shell KEY=value lines; MEDIA_BACKUP_CONF overrides the path)
+#   MEDIA_DIRS="/srv/media"                  folders to back up (space-separated, no spaces inside a path)
+#   REPO=/srv/backup-disk/media              the restic repository, on a DIFFERENT drive
+#   PASSWORD_FILE=/root/.config/restic/media.pass   mode 600; keep a copy off this box, or the backup is useless
+#   MOUNTS="/srv/media /srv/backup-disk"     must be mounted, or the run stops (an empty folder is not a backup)
+#   MUST_HAVE="/srv/media/Photos"            must not be empty (catches a disk that mounted empty)
+#   EXCLUDES="/srv/media/lost+found"         left out
+#   KEEP="--keep-daily 7 --keep-weekly 8 --keep-monthly 12"
+#   IMMICH_DB=immich_postgres                Postgres container to dump first; empty: no dump
+#   IMMICH_DB_USER=postgres  DUMPS=/var/lib/immich/db-dumps   (7 dumps kept, backed up with the media)
+#
+# Usage: media-backup --run        one run: backup, prune snapshots past KEEP, check (the timer does this)
+#        media-backup --check      config, mounts and repository access; backs up nothing
+# Kill switch: sudo touch /etc/media-backup.disable  (or: sudo systemctl disable --now media-backup.timer)
+# Alerts: /usr/local/bin/alert (servers/tools/alert) when it exists, else the journal only.
+# Last success: /var/lib/media-backup/last-ok.
+set -euo pipefail
+case "$#:${1:-}" in
+  1:--run|1:--check) ;;   # no default: a run prunes old snapshots, so it needs --run
+  *) echo "usage: media-backup --run | --check" >&2; exit 2 ;;
+esac
+conf=${MEDIA_BACKUP_CONF:-/etc/homeserver/media-backup.conf}
+STATE=${MEDIA_BACKUP_STATE:-/var/lib/media-backup}
+
+mode=$1
+alert() {   # --check only prints: it writes nothing and sends nothing
+  echo "media-backup FAILED: $1" >&2
+  [ "$mode" = --run ] && [ -x /usr/local/bin/alert ] && /usr/local/bin/alert "$(hostname -s) media-backup: $1. See journalctl -u media-backup."
+  return 0
+}
+
+[ -e /etc/media-backup.disable ] && { echo "media-backup: disabled by /etc/media-backup.disable"; exit 0; }
+[ -r "$conf" ] || { echo "media-backup: missing $conf" >&2; exit 1; }
+# shellcheck source=/dev/null
+. "$conf"
+: "${MEDIA_DIRS:?set MEDIA_DIRS in $conf}" "${REPO:?set REPO in $conf}" "${PASSWORD_FILE:?set PASSWORD_FILE in $conf}"
+MOUNTS=${MOUNTS:-} MUST_HAVE=${MUST_HAVE:-} EXCLUDES=${EXCLUDES:-} IMMICH_DB=${IMMICH_DB:-}
+KEEP=${KEEP:---keep-daily 7 --keep-weekly 8 --keep-monthly 12}
+IMMICH_DB_USER=${IMMICH_DB_USER:-postgres} DUMPS=${DUMPS:-/var/lib/immich/db-dumps}
+export RESTIC_REPOSITORY=$REPO RESTIC_PASSWORD_FILE=$PASSWORD_FILE RESTIC_CACHE_DIR=${RESTIC_CACHE_DIR:-/var/cache/restic} GOMAXPROCS=2
+nc=(); [ "$mode" = --check ] && nc=(--no-cache --no-lock)   # check mode writes nothing to the repo either
+
+for m in $MOUNTS; do mountpoint -q "$m" || { alert "$m is not mounted"; exit 1; }; done
+for d in $MUST_HAVE; do [ -n "$(ls -A "$d" 2>/dev/null)" ] || { alert "$d is empty or missing"; exit 1; }; done
+[ -r "$PASSWORD_FILE" ] || { alert "no password file $PASSWORD_FILE"; exit 1; }
+restic "${nc[@]}" cat config >/dev/null 2>&1 ||
+  { alert "cannot open the repository $REPO (new one? sudo env RESTIC_PASSWORD_FILE=$PASSWORD_FILE restic init --repo $REPO)"; exit 1; }
+if [ "$mode" = --check ]; then
+  echo "media-backup: config ok, mounts ok, repository $REPO opens"
+  restic "${nc[@]}" snapshots --latest 1 --compact || true
+  exit 0
+fi
+mkdir -p "$STATE"
+
+paths=()
+for d in $MEDIA_DIRS; do paths+=("$d"); done
+if [ -n "$IMMICH_DB" ] && docker inspect -f '{{.State.Running}}' "$IMMICH_DB" 2>/dev/null | grep -q true; then
+  # Immich's own nightly dump misses while the box sleeps: dump here, right before the snapshot, keep 7
+  mkdir -p "$DUMPS"; chmod 700 "$DUMPS"
+  f="$DUMPS/immich-$(date +%Y%m%d-%H%M).sql.gz"
+  if docker exec "$IMMICH_DB" pg_dumpall --clean --if-exists --username="$IMMICH_DB_USER" | gzip > "$f.part"; then
+    mv "$f.part" "$f"
+    find "$DUMPS" -maxdepth 1 -name 'immich-*.sql.gz' -printf '%T@ %p\n' | sort -rn | tail -n +8 | cut -d' ' -f2- |
+      xargs -r -d '\n' rm -f
+  else
+    rm -f "$f.part"; alert "Immich database dump failed (media backup continues)"
+  fi
+  paths+=("$DUMPS")
+fi
+
+# A run killed mid-way (reboot, suspend, power cut) leaves its lock behind, and every later forget/prune fails on
+# it. Plain `restic unlock` removes only stale locks (a dead process on this host, or no refresh for 30 min).
+restic unlock || alert "restic unlock failed (backup continues)"
+ex=()
+for e in $EXCLUDES; do ex+=(--exclude "$e"); done
+rc=0
+nice -n 19 ionice -c3 restic backup "${paths[@]}" --one-file-system --exclude-caches "${ex[@]}" \
+  --tag nightly --host "$(hostname -s)" || rc=$?
+# 3 = some files could not be read (the snapshot is still written): alert, keep going
+case $rc in
+  0) ;;
+  3) alert "restic backup exit 3 (some files could not be read)" ;;
+  *) alert "restic backup exit $rc"; exit 1 ;;
+esac
+# shellcheck disable=SC2086  # KEEP is a list of flags
+nice -n 19 ionice -c3 restic forget --tag nightly --host "$(hostname -s)" $KEEP --prune ||
+  { alert "restic forget/prune failed"; exit 1; }
+sub=(); [ "$(date +%u)" = 7 ] && sub=(--read-data-subset=5%)   # Sundays also re-read 5 % of the stored data
+nice -n 19 ionice -c3 restic check "${sub[@]}" || { alert "restic check failed"; exit 1; }
+date -Is > "$STATE/last-ok"
+echo "media-backup ok $(cat "$STATE/last-ok")"

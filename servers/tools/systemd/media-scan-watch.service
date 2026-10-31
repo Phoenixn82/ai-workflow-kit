@@ -1,0 +1,15 @@
+[Unit]
+Description=ClamAV scan of new files in the media folder (quarantine on detection)
+After=clamav-daemon.service
+Requires=clamav-daemon.service
+
+[Service]
+Environment=MEDIA_DIR=/srv/media
+ExecStart=/usr/local/bin/media-scan-watch
+Restart=always
+RestartSec=10
+Nice=15
+IOSchedulingClass=idle
+
+[Install]
+WantedBy=multi-user.target

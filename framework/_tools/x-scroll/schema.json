@@ -1,0 +1,21 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["themes", "notable_posts", "new_voices", "links", "lane_claims", "questions"],
+  "properties": {
+    "themes": {"type": "array", "maxItems": 12, "items": {"type": "object", "additionalProperties": false,
+      "required": ["name", "summary", "posts"],
+      "properties": {"name": {"type": "string"}, "summary": {"type": "string"},
+                     "posts": {"type": "array", "maxItems": 6, "items": {"type": "string"}}}}},
+    "notable_posts": {"type": "array", "maxItems": 15, "items": {"type": "object", "additionalProperties": false,
+      "required": ["post", "why"], "properties": {"post": {"type": "string"}, "why": {"type": "string"}}}},
+    "new_voices": {"type": "array", "maxItems": 10, "items": {"type": "object", "additionalProperties": false,
+      "required": ["post", "why"], "properties": {"post": {"type": "string"}, "why": {"type": "string"}}}},
+    "links": {"type": "array", "maxItems": 15, "items": {"type": "object", "additionalProperties": false,
+      "required": ["link", "why"], "properties": {"link": {"type": "string"}, "why": {"type": "string"}}}},
+    "lane_claims": {"type": "array", "maxItems": 10, "items": {"type": "object", "additionalProperties": false,
+      "required": ["post", "claim"], "properties": {"post": {"type": "string"}, "claim": {"type": "string"}}}},
+    "questions": {"type": "array", "maxItems": 6, "items": {"type": "object", "additionalProperties": false,
+      "required": ["post", "question"], "properties": {"post": {"type": "string"}, "question": {"type": "string"}}}}
+  }
+}

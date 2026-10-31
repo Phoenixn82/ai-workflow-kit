@@ -1,0 +1,21 @@
+#!/bin/bash
+# keydrop.sh <add-key.py args...>
+# Moves the key currently on the clipboard into thor's router without printing it,
+# then clears the clipboard and drops that exact key from Omarchy's clipboard history.
+export WAYLAND_DISPLAY=${WAYLAND_DISPLAY:-wayland-1} XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR:-/run/user/1000}
+key=$(wl-paste --no-newline 2>/dev/null) || { echo "clipboard empty - nothing sent"; exit 1; }
+[ -n "$key" ] || { echo "clipboard empty - nothing sent"; exit 1; }
+printf '%s' "$key" | ssh thor "python3 ~/freellmapi-docker/add-key.py $(printf "%q " "$@")"
+wl-copy --clear
+# Remove only history entries whose text is exactly this key (matched by hash; value never printed).
+KEYHASH=$(printf '%s' "$key" | sha256sum | cut -d' ' -f1) python3 - <<'PY'
+import hashlib, json, os
+p = os.path.expanduser("~/.local/state/omarchy/clipboard-history.json")
+h = json.load(open(p))
+want = os.environ["KEYHASH"]
+keep = [e for e in h if not (e.get("type") == "text" and hashlib.sha256(e.get("text", "").strip().encode()).hexdigest() == want)]
+if len(keep) != len(h):
+    tmp = p + ".tmp"; open(tmp, "w").write(json.dumps(keep, indent=2) + "\n"); os.replace(tmp, p)
+print(f"clipboard history: removed {len(h) - len(keep)} entry(ies) matching the key")
+PY
+unset key

@@ -1,0 +1,11 @@
+# Sundays 05:00 (heimdall's local time). Persistent: a run missed while heimdall was down happens at the next boot.
+[Unit]
+Description=Weekly fleet malware check
+
+[Timer]
+OnCalendar=Sun *-*-* 05:00:00
+RandomizedDelaySec=15min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,49 @@
+{
+  "name": "loki",
+  "role": "media server: Jellyfin streams your own movies, shows and music to every screen",
+  "for": "anyone with a spare laptop and a pile of their own media who wants it on the TV, phone and laptop, one-way firewalled from the other boxes",
+  "addon": false,
+  "os": [
+    "debian",
+    "macos"
+  ],
+  "tools": [
+    "git",
+    "python3",
+    "tailscale",
+    "docker",
+    "jellyfin",
+    "samba",
+    "smartmontools",
+    "server-lane-loki",
+    "hermes",
+    "hermes-loki-desk",
+    "ssh-keylog"
+  ],
+  "services": [
+    {
+      "name": "jellyfin",
+      "kind": "compose",
+      "tool": "jellyfin",
+      "compose": "servers/compose/media/compose.yaml",
+      "service": "jellyfin",
+      "compose_profiles": [
+        "core"
+      ],
+      "env_example": "servers/compose/media/env.example",
+      "health": "curl -fsS http://127.0.0.1:8096/health",
+      "optional": false,
+      "linux_only": true,
+      "project_dir": {
+        "linux": "/opt/homeserver/media"
+      }
+    }
+  ],
+  "automations": [],
+  "rules": [],
+  "requires_hardware": {
+    "ram_gb": 4,
+    "disk_gb": 250,
+    "always_on": true
+  }
+}

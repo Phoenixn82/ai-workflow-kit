@@ -1,0 +1,9 @@
+[Unit]
+Description=thor disk-free probe (/, /srv/data, /srv/media, /srv/work at 90 %), silent Telegram on state change
+ConditionPathExists=%h/.config/disk-probe/chat-id
+
+[Service]
+Type=oneshot
+TimeoutStartSec=60
+ExecStart=%h/.local/bin/disk-probe
+Nice=10

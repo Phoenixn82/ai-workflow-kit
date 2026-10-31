@@ -1,0 +1,67 @@
+#!/bin/sh
+set -u
+
+remote_name=${1:-}
+remote_url=${2:-}
+
+# Resolve symlinks: a repo's core.hooksPath dir may link here, and ../scripts must be found next to the real file.
+hook_path=$(readlink -f -- "$0" 2>/dev/null || printf '%s' "$0")
+hook_dir=$(CDPATH= cd -- "$(dirname -- "$hook_path")" && pwd)
+gate_script="$hook_dir/../scripts/public_push_gate.py"
+
+# Git's ref updates go to a file in a fresh private dir (mktemp -d: unpredictable name, mode 0700), never a predictable
+# /tmp name another account could precreate (kit S5). If they cannot be captured, the push is blocked, never let through.
+blocked() { echo "[public-push-gate] BLOCKED: $*" >&2; exit 1; }
+tmp_dir=$(mktemp -d "${TMPDIR:-/tmp}/public-push-gate.XXXXXXXXXX") && [ -d "$tmp_dir" ] ||
+  blocked "cannot create a private temp dir for git's ref updates"
+trap 'rm -rf -- "$tmp_dir"' EXIT
+trap 'exit 1' HUP INT TERM
+stdin_file="$tmp_dir/stdin"
+cat > "$stdin_file" || blocked "cannot capture git's ref updates"
+
+if command -v cygpath >/dev/null 2>&1; then
+  gate_script_for_python=$(cygpath -w "$gate_script")
+else
+  gate_script_for_python=$gate_script
+fi
+
+python "$gate_script_for_python" \
+  --mode pre-push \
+  --remote-name "$remote_name" \
+  --remote-url "$remote_url" \
+  --stdin-file "$stdin_file"
+gate_status=$?
+if [ "$gate_status" -ne 0 ]; then
+  exit "$gate_status"
+fi
+
+git_common_dir=$(git rev-parse --git-common-dir 2>/dev/null || true)
+if [ -z "$git_common_dir" ]; then
+  exit 0
+fi
+
+case "$git_common_dir" in
+  /*|[A-Za-z]:/*) ;;
+  *)
+    git_root=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+    git_common_dir="$git_root/$git_common_dir"
+    ;;
+esac
+
+local_hook="$git_common_dir/hooks/pre-push"
+if [ ! -f "$local_hook" ]; then
+  exit 0
+fi
+
+this_norm=$(cd "$(dirname -- "$0")" && pwd -P)/$(basename -- "$0")
+local_norm=$(cd "$(dirname -- "$local_hook")" && pwd -P)/$(basename -- "$local_hook")
+if [ "$this_norm" = "$local_norm" ]; then
+  exit 0
+fi
+
+echo "[public-push-gate] chaining local pre-push hook: $local_hook" >&2
+if [ -x "$local_hook" ]; then
+  "$local_hook" "$remote_name" "$remote_url" < "$stdin_file"
+else
+  sh "$local_hook" "$remote_name" "$remote_url" < "$stdin_file"
+fi

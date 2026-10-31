@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# Kit privacy gate on the commit MESSAGE (metadata ships with the history). Same rules as pre-commit's scan.
+set -euo pipefail
+top=$(git rev-parse --show-toplevel)
+tmp=$(mktemp -d "${TMPDIR:-/tmp}/kit-commitmsg.XXXXXX")
+trap 'rm -rf "$tmp"' EXIT
+grep -v '^#' "$1" > "$tmp/COMMIT_MESSAGE" || true
+guard=${GUARD_DENYLIST_FILE:-$(git config --get kit.guardDenylist || true)}
+check=(python3 "$top/tools/scrub.py" --check "$tmp")
+if [[ -n $guard ]]; then
+  owner=$(git remote get-url origin 2>/dev/null | sed -E 's#^.*github\.com[:/]##; s#\.git$##' || true)
+  check+=(--guard-denylist "${guard/#\~/$HOME}" --owner-repo "$owner")
+fi
+"${check[@]}" >&2 || { echo "[kit commit-msg] BLOCKED: the commit message has the items above; reword it" >&2; exit 1; }

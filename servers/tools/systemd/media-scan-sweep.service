@@ -1,0 +1,11 @@
+[Unit]
+Description=Nightly ClamAV sweep of the media folder
+After=clamav-daemon.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/clamdscan --fdpass --multiscan --infected --move=/srv/media/.quarantine /srv/media
+# exit 1 = something was found and quarantined; that is a success for this job (it is logged)
+SuccessExitStatus=1
+Nice=19
+IOSchedulingClass=idle

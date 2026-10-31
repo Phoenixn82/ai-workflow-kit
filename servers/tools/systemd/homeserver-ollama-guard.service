@@ -1,0 +1,19 @@
+# Keeps Ollama's port, 11434, to loopback and the tailnet (thor lane, written by setup.sh). Ollama listens on 0.0.0.0
+# and its drop-in binds it to this unit (BindsTo + After), so it runs only while this table is loaded, at boot too.
+# A table of its own, not part of the main firewall (homeserver-firewall.service): that one changes on trial and can
+# roll back to nothing; this one never does (it closes one port and cannot lock anyone out). Audit R3-2.
+[Unit]
+Description=Ollama port 11434: loopback and tailnet only (nftables table inet homeserver_ollama)
+Wants=network-pre.target
+Before=network-pre.target ollama.service
+DefaultDependencies=no
+After=local-fs.target nftables.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/sbin/nft "table inet homeserver_ollama; delete table inet homeserver_ollama; table inet homeserver_ollama { chain input { type filter hook input priority -10; policy accept; tcp dport 11434 iifname != { lo, tailscale0 } drop; }; }"
+ExecStop=/usr/sbin/nft delete table inet homeserver_ollama
+
+[Install]
+WantedBy=multi-user.target

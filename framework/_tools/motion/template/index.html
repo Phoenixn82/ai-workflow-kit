@@ -1,0 +1,90 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>film</title>
+<style>
+  html, body { margin: 0; background: #111; overflow: hidden; }
+  canvas { display: block; }
+</style>
+<canvas id="c"></canvas>
+<script src="lib/motion.js"></script>
+<script>
+// Render contract: window.FILM describes the film, window.READY resolves when assets are loaded,
+// window.seek(t) paints the exact frame for time t. No timers, no CSS transitions, no carried state.
+const { clamp, lerp, range, sp, track, rng, grid, layout } = M;
+const q = new URLSearchParams(location.search);
+const W = +q.get('w') || 1080, H = +q.get('h') || 1920, DUR = 8, BPM = 120;
+const L = layout(W, H);
+const cv = document.getElementById('c'); cv.width = W; cv.height = H;
+const g = cv.getContext('2d');
+const B = grid(BPM, DUR); // swap for a measured grid: B = await (await fetch('beats.json')).json()
+
+// Palette + type: one display face, one UI face, one accent (house rules).
+const C = { bg: '#141413', ink: '#F0EEE6', dim: '#6B6A65', accent: '#D97757' };
+const DISPLAY = '"Inter", "Helvetica Neue", Arial, sans-serif';
+
+// Scenes: one object per shot, times on the beat grid. Starter only; replace per film.
+const SCENES = [
+  { from: 0, to: B.downbeats[2], draw(t) { // kinetic type, built on the beat
+      const words = ['ONE', 'SHAPE', 'NEVER', 'CUTS'];
+      words.forEach((w, i) => {
+        const s = sp(t - i * 60 / BPM, 'heavy');
+        g.save();
+        g.translate(L.safe.x, H * 0.3 + i * L.u * 22);
+        g.globalAlpha = clamp(s * 3);
+        g.fillStyle = i === 3 ? C.accent : C.ink;
+        g.font = `800 ${L.u * 20}px ${DISPLAY}`;
+        g.fillText(w, lerp(-L.u * 12, 0, s), 0);
+        g.restore();
+      });
+  }},
+  { from: B.downbeats[2], to: DUR, draw(t) { // one container morphs through states on the beat
+      const keys = (vals) => vals.map((v, i) => [i * 60 / BPM, v]);
+      const w = track(t, keys([30, 70, 18, 80, 40, 60, 18, 30].map((v) => v * L.u)), 220, 24);
+      const h = track(t, keys([12, 40, 18, 12, 60, 20, 18, 12].map((v) => v * L.u)), 220, 24);
+      const r = track(t, keys([6, 3, 9, 6, 4, 10, 9, 6].map((v) => v * L.u)), 220, 24);
+      g.fillStyle = C.accent;
+      g.beginPath(); g.roundRect(L.cx - w / 2, L.cy - h / 2, w, h, r); g.fill();
+      const dots = rng(7);
+      for (let i = 0; i < 24; i++) { // seeded texture, identical every render
+        const a = dots() * Math.PI * 2, d = L.u * (40 + dots() * 20) * sp(t - 0.2 - i * 0.02, 'snappy');
+        g.fillStyle = C.dim; g.fillRect(L.cx + Math.cos(a) * d, L.cy + Math.sin(a) * d, L.u, L.u);
+      }
+  }},
+];
+
+function draw(t) {
+  g.fillStyle = C.bg; g.fillRect(0, 0, W, H);
+  for (const s of SCENES) if (t >= s.from && t < s.to) s.draw(t - s.from);
+}
+
+// Sound on the same timeline as the picture: music voices + SFX cues (motion sfx synthesizes these).
+const cues = [];
+B.beats.forEach((t, i) => {
+  if (i % 4 === 0) cues.push({ t, type: 'kick' });
+  if (i % 4 === 2) cues.push({ t, type: 'snare', gain: 0.6 });
+  cues.push({ t: t + 30 / BPM, type: 'hat', gain: 0.5 });
+  cues.push({ t, type: 'bass', f: [55, 55, 65.4, 49][(i >> 2) % 4], len: 0.4 });
+});
+cues.push({ t: SCENES[1].from - 0.3, type: 'whoosh' }, { t: SCENES[1].from, type: 'thump' });
+
+window.FILM = { duration: DUR, width: W, height: H, fps: 60, beats: B.beats, cues, tracks: [] };
+// tracks: extra audio files mixed under the cues, e.g. [{ src: 'audio/vo.wav', at: 0.5, gain: 1 }]
+window.READY = document.fonts.ready;
+window.seek = (t) => { draw(t); return true; };
+
+// Live preview in a normal browser (off in headless render). ?t=3.2 freezes; space pauses; arrows scrub.
+if (!navigator.webdriver) {
+  let t = +q.get('t') || 0, playing = !q.has('t'), last = performance.now();
+  addEventListener('keydown', (e) => {
+    if (e.key === ' ') playing = !playing;
+    if (e.key === 'ArrowRight') t += e.shiftKey ? 1 : 1 / 60;
+    if (e.key === 'ArrowLeft') t -= e.shiftKey ? 1 : 1 / 60;
+  });
+  const loop = (now) => {
+    if (playing) t += (now - last) / 1000;
+    last = now; t = M.loopT(t, DUR); draw(t); document.title = t.toFixed(2) + 's';
+    requestAnimationFrame(loop);
+  };
+  window.READY.then(() => requestAnimationFrame(loop));
+}
+</script>

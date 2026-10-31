@@ -1,0 +1,26 @@
+groq: {tier_max: business, relay: false, pii_ok: false, audit: {status: acceptable, retention: 'none when Global ZDR and Inference API ZDR are enabled in your console', training: 'no, contractual', source_url: 'https://console.groq.com/docs/your-data', checked: '2026-10-13'}}
+huggingface: {tier_max: business, relay: false, pii_ok: false, audit: {status: unknown, retention: '~30-day logs', training: 'depends on routed third party', source_url: 'https://huggingface.co/terms-of-service', checked: '2026-09-29'}}
+kilo: {tier_max: public, relay: false, pii_ok: false, audit: {status: rejected, retention: depends on upstream, training: may log/train, source_url: 'https://kilo.ai/docs/getting-started/using-kilo-for-free', checked: '2026-09-29'}}
+openrouter: {tier_max: public, relay: false, pii_ok: false, audit: {status: rejected, retention: 'depends on upstream', training: 'may train or publish prompts', source_url: 'https://openrouter.ai/docs/guides/privacy/data-collection', checked: '2026-09-29'}}
+nvidia: {tier_max: business, relay: false, pii_ok: false, audit: {status: unknown, retention: 'unverified; monitoring permitted', training: 'not stated', source_url: 'https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-build-nvidia-nim-service-specific-terms/', checked: '2026-09-29'}}
+requesty: {tier_max: public, relay: false, pii_ok: false, audit: {status: rejected, retention: 'up to 30 days in EU', training: 'yes on free plan', source_url: 'https://requesty.ai/privacy', checked: '2026-09-29'}}
+mistral: {tier_max: business, relay: false, pii_ok: false, audit: {status: acceptable, note: 'turn OFF Admin > API > Privacy "train on your API calls"', retention: unverified, training: 'no (opted out)', source_url: 'https://docs.mistral.ai/admin/security-access/privacy', checked: '2026-10-13'}}
+meta: {tier_max: public, relay: false, pii_ok: false, audit: {status: unaudited, retention: unknown, training: unknown, source_url: '', checked: '2026-09-29'}}
+cloudflare: {tier_max: public, relay: false, pii_ok: false, audit: {status: acceptable, retention: not stored, training: no, source_url: 'https://developers.cloudflare.com/workers-ai/platform/data-usage', checked: '2026-09-29'}}
+aihorde: {tier_max: public, relay: false, pii_ok: false, audit: {status: rejected, retention: unknown, training: unknown, source_url: '', checked: '2026-09-29'}}
+cohere: {tier_max: public, relay: false, pii_ok: false, audit: {status: rejected, retention: unknown, training: unknown, source_url: '', checked: '2026-09-29'}}
+unorouter: {tier_max: public, relay: true, pii_ok: false, audit: {status: unaudited, retention: unknown, training: unknown, source_url: '', checked: '2026-09-29'}}
+agnes: {tier_max: public, relay: true, pii_ok: false, audit: {status: unaudited, retention: unknown, training: unknown, source_url: '', checked: '2026-09-29'}}
+nara: {tier_max: public, relay: true, pii_ok: false, audit: {status: unaudited, retention: unknown, training: unknown, source_url: '', checked: '2026-09-29'}}
+thor-local: {tier_max: private, relay: false, pii_ok: false, audit: {status: acceptable, retention: none, training: no, source_url: local, checked: '2026-09-29'}}
+google: {tier_max: public, relay: false, pii_ok: false, audit: {status: rejected, retention: yes, training: 'yes; human reviewers may read prompts', source_url: 'https://ai.google.dev/gemini-api/terms', checked: '2026-09-29'}}
+ovh: {tier_max: business, relay: false, pii_ok: false, audit: {status: acceptable, retention: billing data only, training: no, source_url: 'https://www.ovhcloud.com/en/ai-endpoints/', checked: '2026-09-29'}}
+modelscope: {tier_max: public, relay: false, pii_ok: false, audit: {status: unaudited, retention: unknown, training: unknown, source_url: '', checked: '2026-09-29'}}
+sealion: {tier_max: public, relay: false, pii_ok: false, audit: {status: unaudited, retention: unknown, training: unknown, source_url: '', checked: '2026-09-29'}}
+llm7: {tier_max: public, relay: false, pii_ok: false, audit: {status: unaudited, retention: unknown, training: unknown, source_url: '', checked: '2026-09-29'}}
+xkiro: {tier_max: public, relay: false, pii_ok: false, audit: {status: unaudited, retention: unknown, training: unknown, source_url: '', checked: '2026-09-29'}}
+aion: {tier_max: public, relay: false, pii_ok: false, audit: {status: unaudited, retention: unknown, training: unknown, source_url: '', checked: '2026-09-29'}}
+bazaarlink: {tier_max: public, relay: false, pii_ok: false, audit: {status: unaudited, retention: unknown, training: unknown, source_url: '', checked: '2026-09-29'}}
+zhipu: {tier_max: public, relay: false, pii_ok: false, audit: {status: rejected, retention: varies, training: unverified, source_url: 'https://docs.z.ai/legal-agreement/privacy-policy', checked: '2026-09-29'}}
+custom: {tier_max: private, relay: false, pii_ok: false, audit: {status: unaudited, retention: unknown, training: unknown, source_url: '', checked: '2026-09-29'}}
+ollama: {tier_max: business, relay: false, pii_ok: false, audit: {status: acceptable, retention: transient only, training: no, source_url: '', checked: '2026-09-29'}}

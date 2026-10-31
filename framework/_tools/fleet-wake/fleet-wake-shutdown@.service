@@ -1,0 +1,16 @@
+[Unit]
+Description=Keep %i off after a deliberate or thermal shutdown
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=you
+RemainAfterExit=yes
+ExecStart=/usr/bin/true
+# heimdall = the ssh alias in User='s ~/.ssh/config; give it HostName <address> (not a DNS name) so it resolves at shutdown
+ExecStop=/usr/bin/ssh -o BatchMode=yes -o ConnectTimeout=3 -o ConnectionAttempts=1 heimdall /usr/local/bin/fleet-wake hold %i
+TimeoutStopSec=12
+
+[Install]
+WantedBy=multi-user.target

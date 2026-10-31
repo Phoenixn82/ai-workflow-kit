@@ -1,0 +1,30 @@
+# Install on each box wake-watch WATCHES (not thor or odin: fleet-wake has its own hold), not on heimdall, and not on loki
+# (it may not start connections; run `wake-watch hold loki` on heimdall yourself before switching it off).
+# At a clean shutdown (power button, `poweroff`, a host-heat thermal shutdown) it tells heimdall
+# "this was on purpose", so wake-watch does not wake the box straight back up.
+# A power cut cannot send this; that is what wake-watch is for.
+#
+# It uses OpenSSH on heimdall's port 2222 (tailnet only) with a key that can run ONE command:
+# 1. On this box:  sudo ssh-keygen -t ed25519 -N '' -C "wake-hold@$(hostname)" -f /root/.ssh/wake-hold
+# 2. On heimdall, append to YOUR ~/.ssh/authorized_keys (one line; NAME = this box's name in /etc/wake-watch.conf):
+#      command="/usr/local/bin/wake-watch hold NAME",restrict ssh-ed25519 AAAA...(contents of wake-hold.pub)
+# 3. Set WATCHER below to you@heimdall, then save heimdall's host key once:
+#      sudo ssh -p 2222 -i /root/.ssh/wake-hold you@heimdall      (answer yes; it prints nothing and exits)
+# 4. sudo cp wake-watch-hold.service /etc/systemd/system/ && sudo systemctl enable --now wake-watch-hold.service
+#    Test without shutting down: sudo systemctl stop wake-watch-hold   -> on heimdall `wake-watch status` says hold
+#    Then: sudo systemctl start wake-watch-hold
+[Unit]
+Description=Tell heimdall this shutdown is deliberate (wake-watch hold)
+After=network-online.target tailscaled.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+Environment=WATCHER=you@heimdall
+ExecStart=/usr/bin/true
+ExecStop=/usr/bin/ssh -p 2222 -i /root/.ssh/wake-hold -o BatchMode=yes -o ConnectTimeout=3 -o ConnectionAttempts=1 ${WATCHER} true
+TimeoutStopSec=12
+
+[Install]
+WantedBy=multi-user.target

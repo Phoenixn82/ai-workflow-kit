@@ -1,0 +1,11 @@
+[Unit]
+Description=Copy service data off this box (backup-push)
+Wants=network-online.target
+After=network-online.target tailscaled.service docker.service
+OnFailure=alert@%n.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/backup-push
+Nice=10
+IOSchedulingClass=idle

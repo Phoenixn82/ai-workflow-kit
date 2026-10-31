@@ -1,0 +1,190 @@
+#!/usr/bin/env python3
+"""loki-llm-gate: on odin, lets the quarantined Loki Hermes reach the model router and nothing else.
+
+`aihermes-loki` opens `ssh -R 127.0.0.1:3002:127.0.0.1:3006 loki`, so Loki's localhost:3002 lands here for as long
+as that session lives. Only /v1/* (chat, models) passes on to thor-wake-proxy (127.0.0.1:3002 -> thor FreeLLMAPI);
+the router's admin API and dashboard get 403. Loki itself still can't open a connection to any fleet machine.
+Responses stream back unbuffered (HTTP/1.0, the connection closes after each response).
+
+Usage: loki-llm-gate [LISTEN_PORT [UPSTREAM_PORT]]   (default 3006 -> 3002, both on 127.0.0.1)
+       loki-llm-gate --self-test
+"""
+import http.client
+import http.server
+import socket
+import sys
+import threading
+import time
+
+HOP = {"connection", "keep-alive", "proxy-connection", "transfer-encoding", "te", "trailer", "upgrade", "host",
+       "content-length"}
+MAX_BODY = 32 << 20     # a chat request with a few screenshots fits; anything bigger is refused
+SLOTS = threading.BoundedSemaphore(8)   # open connections; the next one gets 503 before any thread starts
+REQUEST_DEADLINE = 60   # seconds for the whole request (headers and body) to arrive, however slowly it trickles
+
+
+def open_path(path):
+    low = path.lower()
+    return path.startswith("/v1/") and ".." not in path and "%2e" not in low and "%2f" not in low and "\\" not in path
+
+
+def handler(upstream):
+    class Gate(http.server.BaseHTTPRequestHandler):
+        protocol_version = "HTTP/1.0"
+        timeout = 120   # idle socket deadline, also while the reply streams back to loki
+
+        def setup(self):
+            super().setup()
+            self.expired = False
+            self.deadline = threading.Timer(REQUEST_DEADLINE, self.cut)
+            self.deadline.start()
+
+        def cut(self):
+            self.expired = True   # an unfinished request that was cut off is never forwarded
+            try:
+                self.connection.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+
+        def finish(self):
+            self.deadline.cancel()
+            super().finish()
+
+        def relay(self):
+            if self.expired:
+                return
+            if not open_path(self.path):
+                self.send_error(403, "loki-llm-gate: only /v1/ is open")
+                return
+            length = self.headers.get("Content-Length") or "0"
+            if not length.isdigit() or int(length) > MAX_BODY:
+                self.send_error(413 if length.isdigit() else 400, "loki-llm-gate: bad or oversized body")
+                return
+            body = self.rfile.read(int(length))
+            self.deadline.cancel()
+            if self.expired or len(body) != int(length):
+                return   # cut off by the deadline or the client
+            self.forward(body)
+
+        def forward(self, body):
+            headers = {k: v for k, v in self.headers.items() if k.lower() not in HOP}
+            conn = http.client.HTTPConnection("127.0.0.1", upstream, timeout=1800)
+            try:
+                conn.request(self.command, self.path, body=body or None, headers=headers)
+                resp = conn.getresponse()
+            except OSError as e:
+                self.send_error(502, f"loki-llm-gate: router unreachable ({e})")
+                return
+            self.send_response(resp.status, resp.reason)
+            for k, v in resp.getheaders():
+                if k.lower() not in HOP:
+                    self.send_header(k, v)
+            self.end_headers()
+            while chunk := resp.read1(65536):
+                self.wfile.write(chunk)
+                self.wfile.flush()
+            conn.close()
+
+        do_GET = do_POST = relay  # any other method gets the stdlib 501
+
+        def log_message(self, fmt, *args):
+            pass
+
+    return Gate
+
+
+class Server(http.server.ThreadingHTTPServer):
+    daemon_threads = True
+
+    def handle_error(self, request, client_address):
+        if not isinstance(sys.exc_info()[1], OSError):   # a client that hung up is not an error worth a traceback
+            super().handle_error(request, client_address)
+
+    def process_request(self, request, client_address):
+        if not SLOTS.acquire(blocking=False):
+            try:
+                request.sendall(b"HTTP/1.0 503 Service Unavailable\r\nContent-Length: 0\r\n\r\n")
+            except OSError:
+                pass
+            self.shutdown_request(request)
+            return
+        try:
+            super().process_request(request, client_address)
+        except BaseException:
+            SLOTS.release()
+            raise
+
+    def process_request_thread(self, request, client_address):
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            SLOTS.release()
+
+
+def serve(listen, upstream):
+    return Server(("127.0.0.1", listen), handler(upstream))
+
+
+def self_test():
+    hits = []
+
+    class Up(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            hits.append(self.path)
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b"up:" + self.path.encode())
+
+        do_POST = do_GET
+
+        def log_message(self, *a):
+            pass
+
+    up = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Up)
+    gate = serve(0, up.server_address[1])
+    for s in (up, gate):
+        threading.Thread(target=s.serve_forever, daemon=True).start()
+
+    def call(method, path):
+        c = http.client.HTTPConnection("127.0.0.1", gate.server_address[1], timeout=5)
+        c.request(method, path, body=b"{}" if method == "POST" else None)
+        r = c.getresponse()
+        return r.status, r.read()
+
+    assert call("GET", "/v1/models") == (200, b"up:/v1/models")
+    assert call("POST", "/v1/chat/completions") == (200, b"up:/v1/chat/completions")
+    for bad in ("/api/keys", "/", "/v1/../api/keys", "/v1/%2e%2e/api/keys", "/v1/..%2Fapi", "/v1x"):
+        assert call("GET", bad)[0] == 403, bad
+    assert call("PUT", "/v1/models")[0] == 501
+
+    def raw(head):
+        c = http.client.HTTPConnection("127.0.0.1", gate.server_address[1], timeout=5)
+        c.putrequest("POST", "/v1/chat/completions")
+        c.putheader("Content-Length", head)
+        c.endheaders()
+        return c.getresponse().status
+
+    assert raw(str(MAX_BODY + 1)) == 413 and raw("-1") == 400 and raw("1e9") == 400
+
+    global REQUEST_DEADLINE
+    REQUEST_DEADLINE = 0.5
+    idle = [socket.create_connection(gate.server_address) for _ in range(8)]   # 8 trickling clients hold every slot
+    for s in idle:
+        s.sendall(b"POST /v1/chat/completions HTTP/1.0\r\n")
+    time.sleep(0.2)
+    assert call("GET", "/v1/models")[0] == 503, "a ninth connection must be refused"
+    before = len(hits)
+    time.sleep(1)                                         # the deadline cuts the trickling ones ...
+    assert len(hits) == before, "a request cut off by the deadline reached the router"
+    assert call("GET", "/v1/models") == (200, b"up:/v1/models")   # ... and their slots come back
+    for s in idle:
+        s.close()
+    print("loki-llm-gate self-test: ok")
+
+
+if __name__ == "__main__":
+    if sys.argv[1:] == ["--self-test"]:
+        self_test()
+    else:
+        ports = [int(x) for x in sys.argv[1:3]] + [3006, 3002][len(sys.argv[1:3]):]
+        serve(*ports).serve_forever()

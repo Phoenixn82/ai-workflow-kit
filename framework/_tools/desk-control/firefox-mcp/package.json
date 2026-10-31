@@ -1,0 +1,12 @@
+{
+  "name": "firefox-mcp-vendored",
+  "private": true,
+  "description": "Pinned @mozilla/firefox-devtools-mcp with a local fix for new_page targeting the wrong tab (see patch.mjs)",
+  "dependencies": {
+    "@mozilla/firefox-devtools-mcp": "0.10.4"
+  },
+  "scripts": {
+    "postinstall": "node patch.mjs",
+    "test": "python3 test_new_page.py"
+  }
+}

@@ -1,0 +1,556 @@
+#!/usr/bin/env python3
+"""tg-admin: make Telegram groups and bots as the user's own account (Telethon; odin only).
+  tg-admin whoami                                   first name + @username
+  tg-admin groups list                              titles of groups you admin
+  tg-admin groups ensure TITLE [--add @bot] [--admin] [--post TEXT] [--dry-run]
+  tg-admin groups ensure-topics [--bot @bot] [--dry-run]   one group per topic, bot added, hello posted
+  tg-admin bots create "Display Name" name_bot [--dry-run] token -> ~/.config/telegram/bots/name_bot.token
+  tg-admin bots token-rotate name_bot [--dry-run]    /revoke, new token -> same file (only bots with a local token)
+  tg-admin bots list | bots check @handle
+  tg-admin session                                  own "tg-admin" device or Telegram Desktop's? how to revoke it
+  tg-admin --self-test                               offline checks
+Session: ~/.config/telegram/user.session (0600), authorized once from Telegram Desktop's tdata via opentele, as a new
+device "tg-admin" (with cloud 2FA on you type the cloud password once, in a terminal). Only with an explicit
+`tg-admin --share-desktop-session <command>` on that first run does it use Telegram Desktop's own authorization
+instead (no separate device: revoking it logs Telegram Desktop out). Never prints ids, phone numbers or tokens."""
+import argparse, asyncio, contextlib, io, json, os, re, shutil, sys, tempfile, types
+from pathlib import Path
+
+HOME = Path.home()
+VENV = HOME / ".local/telegram/venv"
+if Path(sys.prefix) != VENV and (VENV / "bin/python").exists():  # re-exec inside the isolated venv
+    os.execv(VENV / "bin/python", [str(VENV / "bin/python"), __file__, *sys.argv[1:]])
+
+CFG = HOME / ".config/telegram"
+SESSION, BOTS, TOPICS = CFG / "user.session", CFG / "bots", CFG / "topics.json"
+MODE = CFG / "tg-admin.mode"  # "own-device" or "shared", written at import (none for a session imported before 2026-10-13)
+TDATA = HOME / ".local/share/TelegramDesktop/tdata"
+DEFAULT_TOPICS = ["Heat", "Fleet", "Lane Intel", "Weekly Review", "Jobs", "Mail", "Misc"]
+KIT_HOSTS = Path(os.environ.get("KIT_HOSTS_ENV") or HOME / ".config/ai-workflow-kit/hosts.env")
+
+
+def hosts_env(key):
+    """KEY from the environment, else from the kit's hosts.env (last KEY=value wins); "" when missing."""
+    if os.environ.get(key):
+        return os.environ[key]
+    try:
+        vals = [v.strip().strip("'\"") for k, _, v in (line.partition("=") for line in KIT_HOSTS.read_text().splitlines())
+                if k.strip() == key]
+    except OSError:
+        return ""
+    return vals[-1] if vals else ""
+
+
+# the bot ensure-topics adds to each group: the sender `tg` uses. TG_ADMIN_BOT in the environment or hosts.env
+# (normally the alert host's sender bot)
+DEFAULT_BOT = hosts_env("TG_ADMIN_BOT").lstrip("@")
+HELLO = "hello from tg-admin"
+# ponytail: official Telegram Desktop app id/hash (public, in tdesktop's source); the session is authorized under it
+API_ID, API_HASH = 2040, "b18441a1ff607e10a989891a5462e627"
+DEVICE = dict(device_model="tg-admin", system_version="Arch Linux", app_version="7.2.5 x64")
+TOKEN_RE = re.compile(r"\b(\d{6,12}:[A-Za-z0-9_-]{30,})\b")
+BOT_NAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]{1,28}bot$", re.I)  # 5-32 chars, ends in "bot"
+
+
+def bot_username(s):
+    s = s.lstrip("@")
+    if not BOT_NAME_RE.match(s):
+        raise argparse.ArgumentTypeError(f"{s!r}: 5-32 letters/digits/_ ending in 'bot'")
+    return s
+
+
+def parse_token(text):
+    m = TOKEN_RE.search(text or "")
+    return m.group(1) if m else None
+
+
+def first_line(text):
+    return TOKEN_RE.sub("<token>", (text or "no reply").strip().splitlines()[0])[:160]
+
+
+def topic_titles(path=TOPICS):
+    """tg's format {"topics": {"lane-intel": {"chat_id": ..}, ..}}: slug -> "Lane Intel"; else the fixed list."""
+    try:
+        topics = json.loads(path.read_text()).get("topics")
+    except (OSError, ValueError, AttributeError):
+        return DEFAULT_TOPICS
+    if not isinstance(topics, dict) or not topics:
+        return DEFAULT_TOPICS
+    return [(v.get("title") if isinstance(v, dict) else None) or k.replace("-", " ").title() for k, v in topics.items()]
+
+
+def norm(s):  # same rule as tg --discover: case, spacing and punctuation don't matter
+    return re.sub(r"[^a-z0-9]", "", s.lower())
+
+
+def find_group(title, groups):
+    return next((g for g in groups if norm(g.title) == norm(title)), None)
+
+
+def forget_session():
+    for f in (SESSION, MODE, *(SESSION.with_name(SESSION.name + x) for x in ("-journal", "-wal", "-shm"))):
+        f.unlink(missing_ok=True)
+
+
+def session_mode():
+    try:
+        mode = MODE.read_text().strip()
+    except OSError:
+        return None
+    return mode if mode in ("own-device", "shared") else None
+
+
+TWO_FA = ("Cloud 2FA is on, so a separate tg-admin device needs your Telegram cloud password once: run `tg-admin whoami` "
+          "in a terminal and type it there (never in a chat). Or, knowingly, rerun with --share-desktop-session to use "
+          "Telegram Desktop's own authorization instead: no separate device, and revoking it logs Telegram Desktop out "
+          "(README-admin.md). Nothing saved.")
+
+
+def revoke_steps(mode, shown=None):
+    """How to cut tg-admin's access for the way its session was imported (audit S11). shown = how Settings > Devices
+    lists this session now; a shared login can show tg-admin's device name, so the mode comes from MODE, not from it."""
+    entry = f' (Settings > Devices lists it as "{shown}")' if shown else ""
+    again = ("While Telegram Desktop is logged in here, a later tg-admin run can import again: to prevent that, remove "
+             "tg-admin (rm ~/.local/bin/tg-admin) or keep Telegram Desktop logged out.")
+    if mode == "own-device":
+        return (f'This session is its own device, "tg-admin"{entry}. To revoke it: Telegram > Settings > Devices > that '
+                f"entry > Terminate, then rm {SESSION}. Telegram Desktop stays logged in. " + again)
+    if mode == "shared":
+        return (f"This session SHARES Telegram Desktop's authorization{entry}: there is no separate tg-admin device, and "
+                f"deleting {SESSION} does not revoke a copy of it. To revoke it: terminate that entry in Telegram > "
+                f"Settings > Devices (this logs Telegram Desktop out too), then rm {SESSION}. " + again)
+    return (f"This session was imported before tg-admin recorded how (own device or shared with Telegram Desktop){entry}."
+            f" Revoke it the strict way: terminate that entry in Telegram > Settings > Devices (if it is Telegram "
+            f"Desktop's own login, that logs Telegram Desktop out too), then rm {SESSION}; deleting the file alone does "
+            "not revoke a copy. " + again)
+
+
+async def current_device(c):
+    """How Telegram > Settings > Devices lists this session right now: app, device, platform (no ids, no IP)."""
+    from telethon.tl.functions.account import GetAuthorizationsRequest
+    cur = next((x for x in (await c(GetAuthorizationsRequest())).authorizations if x.current), None)
+    return cur and f"{cur.app_name} {cur.app_version} on {cur.device_model}, {cur.platform}"
+
+
+def write_secret(path, text):
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    os.fchmod(fd, 0o600)  # O_CREAT's mode is ignored when the file already exists
+    with os.fdopen(fd, "w") as f:
+        f.write(text + "\n")
+
+
+async def authorize_from_desktop(share=False):
+    from PyQt5.QtCore import QByteArray
+    from opentele.api import API, CreateNewSession, UseCurrentSession
+    from opentele.exception import NoPasswordProvided, OpenTeleException, PasswordIncorrect, TDataBadDecryptKey
+    from opentele.td import TDesktop
+    from opentele.td.account import StorageAccount
+
+    def read_map(self, local_key, legacy=QByteArray()):
+        # ponytail: TDesktop 7.x map has key types opentele 1.15 can't parse; the auth key is in the mtp file, not the map
+        with contextlib.suppress(OpenTeleException):
+            self._StorageAccount__mapData.read(local_key, legacy)
+        self.readMtpData()
+    StorageAccount.readMapWith = read_map
+
+    with contextlib.redirect_stdout(io.StringIO()):
+        try:
+            td = TDesktop(str(TDATA))
+        except TDataBadDecryptKey:
+            if not sys.stdin.isatty():
+                sys.exit("Telegram Desktop has a local passcode: run `tg-admin whoami` in a terminal and type it once")
+            import getpass
+            td = TDesktop(str(TDATA), passcode=getpass.getpass("Telegram Desktop local passcode: "))
+        if share:  # explicit opt-in only (audit S11): this session then IS Telegram Desktop's authorization
+            c = await td.ToTelethon(str(SESSION), UseCurrentSession)
+        else:  # a new, separately revocable device named tg-admin
+            new = dict(api=API.TelegramDesktop(**DEVICE))
+            try:
+                c = await td.ToTelethon(str(SESSION), CreateNewSession, **new)
+            except NoPasswordProvided:  # cloud 2FA: ask for the password; never fall back to sharing silently
+                if not sys.stdin.isatty():
+                    sys.exit(TWO_FA)
+                import getpass
+                forget_session()
+                try:
+                    c = await td.ToTelethon(str(SESSION), CreateNewSession, **new, password=getpass.getpass(
+                        "Telegram cloud password (2FA; once, for the new tg-admin device): "))
+                except PasswordIncorrect:
+                    sys.exit("wrong cloud password; nothing saved, rerun")
+    MODE.write_text(("shared" if share else "own-device") + "\n")
+    await c.disconnect()  # saves the session; UseCurrentSession's client was never connected, so query nothing here
+    print("session: authorized once from Telegram Desktop, " + ("shared with Telegram Desktop" if share else
+                                                                 "new device 'tg-admin'"), file=sys.stderr)
+
+
+async def client(share=False):
+    from telethon import TelegramClient
+    os.umask(0o077)
+    CFG.mkdir(mode=0o700, parents=True, exist_ok=True)
+    fresh = not SESSION.exists()
+    if fresh:
+        try:
+            await authorize_from_desktop(share)
+        except BaseException:
+            forget_session()
+            raise
+    elif share:
+        print(f"--share-desktop-session ignored: {SESSION} exists (the flag only matters for a new import)", file=sys.stderr)
+    os.chmod(SESSION, 0o600)
+    c = TelegramClient(str(SESSION), API_ID, API_HASH, **DEVICE)
+    await c.connect()
+    if not await c.is_user_authorized():
+        await c.disconnect()
+        sys.exit(f"session not authorized: delete {SESSION} and rerun to re-import from Telegram Desktop")
+    if fresh:  # after tg-admin's own connect: that is how Settings > Devices lists the session from now on
+        print(revoke_steps(session_mode(), await current_device(c)), file=sys.stderr)
+    return c
+
+
+async def my_groups(c):
+    return [d.entity async for d in c.iter_dialogs() if d.is_group
+            and not getattr(d.entity, "left", False) and not getattr(d.entity, "deactivated", False)
+            and (getattr(d.entity, "creator", False) or getattr(d.entity, "admin_rights", None))]
+
+
+async def resolve_bot(c, handle):
+    e = await c.get_entity(handle.lstrip("@"))
+    if not getattr(e, "bot", False):
+        sys.exit(f"@{handle.lstrip('@')} is not a bot")
+    return e
+
+
+async def ensure(c, title, groups, bot=None, admin=False, post=None, dry=False):
+    from telethon.tl.functions.channels import CreateChannelRequest, InviteToChannelRequest
+    from telethon.tl.functions.messages import AddChatUserRequest
+    from telethon.tl.types import Channel
+    g, did = find_group(title, groups), {}
+    bot_p = None
+    if g:
+        others = [p for p in await c.get_participants(g) if not p.is_self]
+        if any(not p.bot for p in others):  # never touch a group with people in it
+            return print(f"{title}: exists with other people in it, left alone")
+        bot_p = next((p for p in others if bot and p.id == bot.id), None)
+    else:
+        did["created"] = True
+        if not dry:
+            g = (await c(CreateChannelRequest(title=title, about="", megagroup=True))).chats[0]
+            groups.append(g)
+    if bot and not bot_p:
+        did["added"] = True
+        if not dry:
+            await c(InviteToChannelRequest(g, [bot]) if isinstance(g, Channel) else AddChatUserRequest(g.id, bot, 0))
+    # ponytail: admin status read off the participant's type name (ChannelParticipantAdmin / ChatParticipantAdmin)
+    if bot and admin and "Admin" not in type(getattr(bot_p, "participant", None)).__name__:
+        did["admin"] = True
+        if not dry:
+            # explicit False: Telethon defaults every unset right to is_admin (anonymous, post_messages -> RIGHT_FORBIDDEN)
+            await c.edit_admin(g, bot, is_admin=True, add_admins=False, anonymous=False, post_messages=False,
+                               edit_messages=False)
+    if post:
+        mine = await c.get_messages(g, limit=100, from_user="me") if g else []
+        if not any(m.message == post for m in mine):
+            did["posted"] = True
+            if not dry:
+                await c.send_message(g, post)
+    keys = ["created", "added"] + (["admin"] if admin else []) + ["posted"]
+    print(("[dry-run] " if dry else "") + f"{title}: " + " ".join(f"{k}={'yes' if did.get(k) else 'no'}" for k in keys))
+
+
+async def botfather(c, steps):
+    """steps: [(text, regex the reply must match or None)]; returns the last reply message."""
+    async with c.conversation("BotFather", timeout=60) as conv:
+        for text, expect in steps:
+            await conv.send_message(text)
+            reply = await conv.get_response()
+            if expect and not re.search(expect, reply.raw_text, re.I):
+                await conv.send_message("/cancel")
+                sys.exit("BotFather: " + first_line(reply.raw_text))
+        return reply
+
+
+def save_token(username, token):
+    path = BOTS / f"{username}.token"
+    write_secret(path, token)
+    print(f"@{username}: token saved to {path}")
+    # ponytail: no `secret` courier CLI on odin (2026-10-12); wire the copy in here once it exists
+    print("courier: " + ("`secret` CLI found but not wired, copy by hand" if shutil.which("secret") else "skipped, no `secret` CLI"))
+
+
+async def run(a):
+    if a.cmd == "bots" and a.action == "token-rotate" and not (BOTS / f"{a.username}.token").exists() and not a.force:
+        sys.exit(f"@{a.username}: its token is not in {BOTS}, so something else uses it (heimdall's tg and example_app use "
+                 f"@{DEFAULT_BOT or '<TG_ADMIN_BOT>'}); /revoke would break that. Rerun with --force only if the user said so")
+    if a.cmd == "bots" and a.action in ("create", "token-rotate") and a.dry_run:
+        verb = f"ask BotFather for a new bot named {a.name!r}" if a.action == "create" else "/revoke the token of"
+        return print(f"[dry-run] would {verb} @{a.username}; token -> {BOTS / (a.username + '.token')}")
+    from telethon import errors
+    c = await client(a.share_desktop_session)
+    try:
+        if a.cmd == "whoami":
+            me = await c.get_me()
+            print(me.first_name, f"@{me.username}" if me.username else "(no username)")
+        elif a.cmd == "session":
+            mode = session_mode()
+            print({"own-device": "own device 'tg-admin'", "shared": "shared with Telegram Desktop"}.get(mode, "unrecorded")
+                  + "\n" + revoke_steps(mode, await current_device(c)))
+        elif a.cmd == "groups" and a.action == "list":
+            for g in await my_groups(c):
+                print(g.title)
+        elif a.cmd == "groups":
+            groups = await my_groups(c)
+            if a.action == "ensure":
+                await ensure(c, a.title, groups, a.add and await resolve_bot(c, a.add), a.admin, a.post, a.dry_run)
+            else:
+                if not a.bot:
+                    sys.exit(f"ensure-topics: pass --bot @name, or set TG_ADMIN_BOT in {KIT_HOSTS}")
+                bot = await resolve_bot(c, a.bot)
+                for title in topic_titles():
+                    await ensure(c, title, groups, bot, False, HELLO, a.dry_run)
+        elif a.action == "create":
+            reply = await botfather(c, [("/newbot", "name"), (a.name, "username"), (a.username, TOKEN_RE.pattern)])
+            save_token(a.username, parse_token(reply.raw_text))
+        elif a.action == "token-rotate":
+            reply = await botfather(c, [("/revoke", "choose|@"), ("@" + a.username, TOKEN_RE.pattern)])
+            save_token(a.username, parse_token(reply.raw_text))
+        elif a.action == "list":
+            reply = await botfather(c, [("/mybots", None)])
+            # ponytail: first page of /mybots buttons only; BotFather pages after ~10 bots
+            handles = [b.text for row in (reply.buttons or []) for b in row if b.text.startswith("@")]
+            if handles:
+                print("\n".join(handles))
+            else:
+                local = sorted(f"@{p.stem}" for p in BOTS.glob("*.token"))
+                print("BotFather listed none; local token files:", " ".join(local) or "none")
+        elif a.action == "check":
+            h = a.handle.lstrip("@")
+            try:
+                ok = bool(getattr(await c.get_entity(h), "bot", False))
+            except (ValueError, errors.RPCError):
+                ok = None
+            print(f"@{h}: " + {True: "bot", False: "not a bot", None: "not found"}[ok])
+            if not ok:
+                seen = [f"@{d.entity.username}" async for d in c.iter_dialogs()
+                        if getattr(d.entity, "bot", False) and getattr(d.entity, "username", None)]
+                print("bots you have chats with:", " ".join(seen) or "none")
+    except TimeoutError:  # asyncio.TimeoutError since 3.11; BotFather conversation went quiet
+        sys.exit("BotFather did not answer within 60s; nothing saved, rerun")
+    except errors.FloodWaitError as e:
+        sys.exit(f"Telegram says wait {e.seconds}s")
+    except errors.RPCError as e:
+        sys.exit(f"Telegram error: {type(e).__name__}")
+    finally:
+        await c.disconnect()
+
+
+def parser():
+    p = argparse.ArgumentParser(prog="tg-admin", description=__doc__.splitlines()[0])
+    p.add_argument("--self-test", action="store_true")
+    p.add_argument("--share-desktop-session", action="store_true",
+                   help="first import only: use Telegram Desktop's own authorization instead of a new tg-admin device "
+                        "(no separate device; revoking it logs Telegram Desktop out)")
+    sub = p.add_subparsers(dest="cmd")
+    sub.add_parser("whoami")
+    sub.add_parser("session")
+    g = sub.add_parser("groups").add_subparsers(dest="action", required=True)
+    g.add_parser("list")
+    e = g.add_parser("ensure")
+    e.add_argument("title")
+    e.add_argument("--add", metavar="@bot")
+    e.add_argument("--admin", action="store_true")
+    e.add_argument("--post")
+    t = g.add_parser("ensure-topics")
+    t.add_argument("--bot", default=DEFAULT_BOT)
+    b = sub.add_parser("bots").add_subparsers(dest="action", required=True)
+    bc = b.add_parser("create")
+    bc.add_argument("name")
+    br = b.add_parser("token-rotate")
+    for x in (bc, br):
+        x.add_argument("username", type=bot_username)
+    br.add_argument("--force", action="store_true", help="rotate a token tg-admin did not create")
+    b.add_parser("list")
+    b.add_parser("check").add_argument("handle")
+    for x in (e, t, bc, br):
+        x.add_argument("--dry-run", action="store_true")
+    return p
+
+
+SAMPLES = [  # recorded-shape BotFather replies; tokens are fake
+    ("Done! Congratulations on your new bot. You will find it at t.me/odin_test_bot. You can now add a description, "
+     "about section and profile picture for your bot, see /help for a list of commands.\n\nUse this token to access "
+     "the HTTP API:\n7012345678:AAFakeTokenFakeTokenFakeTokenFake123\nKeep your token secure and store it safely, "
+     "it can be used by anyone to control your bot.", "7012345678:AAFakeTokenFakeTokenFakeTokenFake123"),
+    ("Your token was replaced with a new one. You can use this token to access HTTP API:\n"
+     "7012345678:AAHnewFake_Token-FakeTokenFakeToken9\n\nFor a description of the Bot API, see this page: "
+     "https://core.telegram.org/bots/api", "7012345678:AAHnewFake_Token-FakeTokenFakeToken9"),
+    ("Sorry, this username is already taken. Please try something different.", None),
+]
+
+
+def self_test():
+    p = parser()
+    a = p.parse_args(["groups", "ensure", "Lane Intel", "--add", "@x_bot", "--post", "hi", "--dry-run"])
+    assert (a.title, a.add, a.post, a.dry_run, a.admin) == ("Lane Intel", "@x_bot", "hi", True, False)
+    assert p.parse_args(["groups", "ensure-topics"]).bot == DEFAULT_BOT
+    global KIT_HOSTS  # TG_ADMIN_BOT: environment, else hosts.env, else "" (ensure-topics then asks for --bot)
+    real, saved = KIT_HOSTS, os.environ.pop("TG_ADMIN_BOT", None)
+    with tempfile.TemporaryDirectory() as d:
+        KIT_HOSTS = Path(d) / "hosts.conf"
+        try:
+            assert hosts_env("TG_ADMIN_BOT") == ""
+            KIT_HOSTS.write_text("# c\nTG_ADMIN_BOT=@a_bot\n")
+            assert hosts_env("TG_ADMIN_BOT") == "@a_bot"
+            os.environ["TG_ADMIN_BOT"] = "b_bot"
+            assert hosts_env("TG_ADMIN_BOT") == "b_bot"
+        finally:
+            KIT_HOSTS = real
+            os.environ.pop("TG_ADMIN_BOT", None)
+            if saved is not None:
+                os.environ["TG_ADMIN_BOT"] = saved
+    assert p.parse_args(["bots", "create", "My Bot", "@my_test_bot"]).username == "my_test_bot"
+    assert p.parse_args(["bots", "token-rotate", "a_bot", "--dry-run"]).dry_run
+    assert p.parse_args(["bots", "token-rotate", "a_bot", "--force"]).force
+    for bad in (["bots", "create", "X", "nosuffix"], ["bots", "create", "X", "ab_bot!"], ["groups"]):
+        with contextlib.redirect_stderr(io.StringIO()), contextlib.suppress(SystemExit):
+            p.parse_args(bad)
+            raise AssertionError(f"accepted {bad}")
+    with tempfile.TemporaryDirectory() as d:
+        d = Path(d)
+        assert topic_titles(d / "missing.json") == DEFAULT_TOPICS
+        (d / "bad.json").write_text("{nope")
+        assert topic_titles(d / "bad.json") == DEFAULT_TOPICS
+        (d / "t.json").write_text(json.dumps({"topics": {"heat": {"chat_id": None, "notify": True},
+                                                         "lane-intel": {"chat_id": -1}, "x": {"title": "X Feed"}},
+                                              "default_chat_id": "1"}))
+        assert topic_titles(d / "t.json") == ["Heat", "Lane Intel", "X Feed"]
+        (d / "l.json").write_text("[1, 2]")
+        assert topic_titles(d / "l.json") == DEFAULT_TOPICS
+        old = os.umask(0)
+        try:
+            f = d / "bots" / "x_bot.token"
+            f.parent.mkdir()
+            f.write_text("old")
+            f.chmod(0o644)
+            write_secret(f, "tok")
+            write_secret(d / "new" / "y_bot.token", "tok")
+            assert f.stat().st_mode & 0o777 == 0o600 and f.read_text() == "tok\n"
+            assert (d / "new" / "y_bot.token").stat().st_mode & 0o777 == 0o600
+            assert (d / "new").stat().st_mode & 0o777 == 0o700
+        finally:
+            os.umask(old)
+    gs = [types.SimpleNamespace(title=t) for t in ("Jobs 2", "lane intel", "Weekly-Review", "Mail Old")]
+    assert find_group("Lane Intel", gs) is gs[1] and find_group("Weekly Review", gs) is gs[2]
+    assert find_group("Jobs", gs) is None and find_group("Mail", gs) is None
+    for text, want in SAMPLES:
+        assert parse_token(text) == want
+    assert first_line("token " + SAMPLES[0][1] + "\nmore") == "token <token>"
+    auth_test()
+    print("self-test: ok")
+
+
+def auth_test():
+    """audit S11: cloud 2FA never silently turns the import into a shared Telegram Desktop session; each mode prints
+    its own revocation steps. opentele, PyQt5 and telethon are faked, so this runs without the venv. The fakes keep
+    the real connection states: opentele's UseCurrentSession client comes back unconnected (a query on it raises)."""
+    from unittest import mock
+    global CFG, SESSION, MODE
+    NoPw, BadPw = type("NoPasswordProvided", (Exception,), {}), type("PasswordIncorrect", (Exception,), {})
+    new_flag, cur_flag, calls = object(), object(), []
+
+    class Client:  # telethon's TelegramClient; Settings > Devices shows the device of the last connect (initConnection)
+        def __init__(self, session=None, api_id=None, api_hash=None, connected=False, **kw):
+            self.connected, self.model = connected, kw.get("device_model", "Desktop PC")
+
+        async def connect(self):
+            self.connected = True
+
+        async def is_user_authorized(self):
+            return True
+
+        async def __call__(self, req):
+            if not self.connected:
+                raise ConnectionError("Cannot send requests while disconnected")
+            return types.SimpleNamespace(authorizations=[types.SimpleNamespace(
+                current=True, device_model=self.model, app_name="Telegram Desktop", app_version="7.2.5", platform="Linux")])
+
+        async def disconnect(self):
+            self.connected = False
+
+    class TDesktop:
+        def __init__(self, path, passcode=None):
+            pass
+
+        async def ToTelethon(self, session, flag, api=None, password=None):
+            calls.append(("shared" if flag is cur_flag else "new", password))
+            Path(session).touch()  # both flags open the SQLite session file first
+            if flag is new_flag and password != "pw":
+                raise NoPw() if password is None else BadPw()
+            return Client(connected=flag is new_flag)  # CreateNewSession: QR login left it connected
+
+    mod = lambda **kw: types.SimpleNamespace(**kw)
+    fakes = {"PyQt5.QtCore": mod(QByteArray=lambda: None),
+             "opentele.api": mod(API=mod(TelegramDesktop=lambda **kw: kw), CreateNewSession=new_flag,
+                                 UseCurrentSession=cur_flag),
+             "opentele.exception": mod(NoPasswordProvided=NoPw, PasswordIncorrect=BadPw, OpenTeleException=Exception,
+                                       TDataBadDecryptKey=type("TDataBadDecryptKey", (Exception,), {})),
+             "opentele.td": mod(TDesktop=TDesktop), "opentele.td.account": mod(StorageAccount=type("SA", (), {})),
+             "telethon": mod(TelegramClient=Client),
+             "telethon.tl.functions.account": mod(GetAuthorizationsRequest=lambda: None)}
+
+    async def first_run(share):  # what `tg-admin [--share-desktop-session] whoami` does with the session
+        (await client(share)).connected = False
+
+    def attempt(share, tty, password=None):
+        del calls[:]
+        err = io.StringIO()
+        with mock.patch.dict(sys.modules, fakes), mock.patch.object(sys, "stdin", mod(isatty=lambda: tty)), \
+                mock.patch("getpass.getpass", lambda prompt="": password), contextlib.redirect_stderr(err):
+            try:
+                asyncio.run(first_run(share))
+            except SystemExit as e:
+                return f"exit: {e}"
+        return err.getvalue()
+
+    real, umask = (CFG, SESSION, MODE), os.umask(0o077)
+    entry = 'lists it as "Telegram Desktop 7.2.5 on tg-admin, Linux"'
+    with tempfile.TemporaryDirectory() as d:
+        CFG = Path(d) / "telegram"
+        SESSION, MODE = CFG / "user.session", CFG / "tg-admin.mode"
+        try:
+            out = attempt(False, tty=False)  # 2FA, no terminal: stop and explain, never share, keep nothing
+            assert out.startswith("exit: Cloud 2FA") and "--share-desktop-session" in out and calls == [("new", None)], out
+            assert session_mode() is None and not SESSION.exists()
+            out = attempt(False, tty=True, password="pw")  # 2FA in a terminal: still a separate device
+            assert calls == [("new", None), ("new", "pw")] and "new device 'tg-admin'" in out, (calls, out)
+            assert 'own device, "tg-admin"' in out and entry in out and "Terminate" in out and "SHARES" not in out, out
+            assert session_mode() == "own-device" and oct(SESSION.stat().st_mode & 0o777) == "0o600"
+            out = attempt(True, tty=False)  # the flag never re-imports an existing session
+            assert calls == [] and "--share-desktop-session ignored" in out and session_mode() == "own-device", out
+            forget_session()
+            out = attempt(False, True, "wrong")  # wrong cloud password
+            assert out.startswith("exit: wrong cloud password") and ("shared", None) not in calls, (calls, out)
+            assert not SESSION.exists() and session_mode() is None
+            out = attempt(True, tty=False)  # explicit opt-in: shared, and it names the Devices entry to terminate
+            assert calls == [("shared", None)] and "SHARES Telegram Desktop" in out and entry in out, (calls, out)
+            assert "does not revoke a copy" in out and "logs Telegram Desktop out" in out and session_mode() == "shared"
+            assert "strict way" in revoke_steps(None) and "does not revoke a copy" in revoke_steps(None)
+            forget_session()
+            assert not MODE.exists() and session_mode() is None
+        finally:
+            (CFG, SESSION, MODE), _ = real, os.umask(umask)
+    assert parser().parse_args(["--share-desktop-session", "whoami"]).share_desktop_session
+    assert not parser().parse_args(["session"]).share_desktop_session
+
+
+def main():
+    a = parser().parse_args()
+    if a.self_test:
+        return self_test()
+    if not a.cmd:
+        return parser().print_help()
+    asyncio.run(run(a))
+
+
+if __name__ == "__main__":
+    main()

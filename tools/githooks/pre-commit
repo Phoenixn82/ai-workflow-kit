@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+# Kit privacy gate on the STAGED content (r1 #1, #2). Enable once per clone:  git config core.hooksPath tools/githooks
+# Blocks the commit when:
+#   - the author or committer email is not a GitHub noreply address (<id>+<user>@users.noreply.github.com)
+#   - a private rules/denylist file is staged
+#   - tools/scrub.py --check finds anything in the staged blobs (scrub rewrites, username, credentials, forbidden
+#     paths, verify denylist, binaries; plus the public push gate's personal-data denylist when configured:
+#     git config kit.guardDenylist <path to denylist.local.json>, or $GUARD_DENYLIST_FILE)
+#   - gitleaks finds a secret in the staged blobs (gitleaks missing = blocked)
+# Never bypass it (no --no-verify): fix the content instead.
+set -euo pipefail
+fail() { echo "[kit pre-commit] BLOCKED: $*" >&2; exit 1; }
+
+top=$(git rev-parse --show-toplevel)
+for who in AUTHOR COMMITTER; do
+  ident=$(git var "GIT_${who}_IDENT") || fail "no $who identity"
+  email=${ident#*<}; email=${email%%>*}
+  [[ $email == *@users.noreply.github.com ]] ||
+    fail "the $who email is not a GitHub noreply address; run: git config user.email <id>+<user>@users.noreply.github.com"
+done
+
+staged=()   # a read loop, not mapfile: macOS still ships bash 3.2
+while IFS= read -r -d '' path; do staged+=("$path"); done < <(git diff --cached --name-only --diff-filter=ACMRT -z)
+[[ ${#staged[@]} -eq 0 ]] && exit 0
+for path in "${staged[@]}"; do
+  case "/$path" in
+    */scrub-rules.local*.json|*/denylist.local*.json) fail "private rules file staged: $path (git rm --cached it)" ;;
+  esac
+done
+
+tmp=$(mktemp -d "${TMPDIR:-/tmp}/kit-precommit.XXXXXX")
+trap 'rm -rf "$tmp"' EXIT
+# The index, not the working tree; symlinks come out as plain files holding their target, so nothing outside is read.
+printf '%s\0' "${staged[@]}" | git -c core.symlinks=false checkout-index --prefix="$tmp/" -z --stdin
+
+guard=${GUARD_DENYLIST_FILE:-$(git config --get kit.guardDenylist || true)}
+check=(python3 "$top/tools/scrub.py" --check "$tmp")
+if [[ -n $guard ]]; then
+  owner=$(git remote get-url origin 2>/dev/null | sed -E 's#^.*github\.com[:/]##; s#\.git$##' || true)
+  check+=(--guard-denylist "${guard/#\~/$HOME}" --owner-repo "$owner")
+else
+  echo "[kit pre-commit] guard denylist not configured (git config kit.guardDenylist <file>); skipped" >&2
+fi
+"${check[@]}" >&2 || fail "privacy check found the items above (exit $?); fix the content, then stage again"
+
+command -v gitleaks >/dev/null || fail "gitleaks is not installed (fail closed)"
+gitleaks dir "$tmp" --no-banner --redact --log-level warn >&2 || fail "gitleaks found a secret in the staged content"

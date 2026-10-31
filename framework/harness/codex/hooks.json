@@ -1,0 +1,117 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume|clear",
+        "hooks": [
+          {
+            "command": "$HOME/.local/bin/vault-sync pull",
+            "timeout": 10,
+            "type": "command"
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "command": "bash '$HOME/.codex/herdr-agent-state.sh' session",
+            "timeout": 10,
+            "type": "command"
+          }
+        ]
+      },
+      {
+        "matcher": "startup|resume|clear",
+        "hooks": [
+          {
+            "command": "bash $HOME/AI_Projects/pipeline/handoff-v2/bin/handoff-start.sh --codex",
+            "timeout": 10,
+            "type": "command"
+          },
+          {
+            "command": "bash $HOME/AI_Projects/.claude/hooks/inject-vault-boot.sh",
+            "timeout": 10,
+            "type": "command"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "command": "$HOME/.local/bin/vault-sync push",
+            "timeout": 90,
+            "type": "command"
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "command": "bash $HOME/AI_Projects/pipeline/handoff-v2/bin/handoff-end.sh --codex",
+            "timeout": 90,
+            "type": "command"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash|apply_patch|Edit|Write",
+        "hooks": [
+          {
+            "command": "bash $HOME/.claude/hooks/webcred-guard.sh",
+            "timeout": 5,
+            "type": "command"
+          }
+        ]
+      },
+      {
+        "matcher": ".*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 -I -S $HOME/.claude/hooks/web-taint/codex_supervise.py",
+            "timeout": 60,
+            "async": false
+          }
+        ]
+      },
+      {
+        "matcher": ".*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 -I -S $HOME/.claude/hooks/camera-guard.py --exit2",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash $HOME/AI_Projects/_tools/vault-rag/hook-user-prompt.sh",
+            "timeout": 8
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": ".*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 -I -S $HOME/.claude/hooks/web-taint/codex_supervise.py",
+            "timeout": 60,
+            "async": false
+          }
+        ]
+      }
+    ]
+  }
+}

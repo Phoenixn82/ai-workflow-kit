@@ -1,0 +1,77 @@
+#!/usr/bin/env bash
+# backup-push: nightly off-box copy of this server's service data to thor (or any box with disk).
+#
+# It talks to OpenSSH on port 2222 (tailnet only), not port 22: Tailscale SSH answers port 22 and ignores
+# authorized_keys restrictions. The receiving side pins the key to rrsync in ONE directory, write-only,
+# deletes and overwrites refused (on thor, in your ~/.ssh/authorized_keys, one line):
+#   command="rrsync -wo -no-del -no-overwrite /srv/backups/heimdall",restrict ssh-ed25519 AAAA... backup-push@heimdall
+# Each night lands in its own dated folder (2026-10-09/opt_homeserver/...), so even if this box is wiped or
+# taken over, it cannot read, delete or change what is already there; it can only add. (-no-overwrite
+# needs rsync 3.5+ on the receiver. One copy per day: a second run the same day only adds missing files.)
+#
+# Config: /etc/homeserver/backup.conf
+#   DEST=you@thor                                 user@host of the receiving side
+#   PORT=2222                                     its OpenSSH port for machine jobs
+#   WAKE_MAC=XX:XX:XX:XX:XX:XX                    optional, for a receiver that sleeps when idle (thor): send
+#   WAKE_BROADCAST=192.0.2.255                    it a Wake-on-LAN packet and wait up to 3 min for PORT first
+#   SOURCES="/opt/homeserver"                      what to copy (space separated). Do not add
+#                                                 /etc/homeserver: it holds this key and alert secrets.
+#   EXCLUDES="uptime-kuma etc-pihole"             live database dirs (default): copied as snapshots below instead
+# Key: /etc/homeserver/backup/id_ed25519 (made by setup.sh heimdall). Host key pinned in .../known_hosts:
+#   ssh-keyscan -p 2222 thor > /etc/homeserver/backup/known_hosts   (check the fingerprint once)
+set -euo pipefail
+conf=/etc/homeserver/backup.conf
+[ -r "$conf" ] || { echo "backup-push: missing $conf" >&2; exit 1; }
+. "$conf"
+: "${DEST:?DEST not set in $conf}"
+SOURCES="${SOURCES:-/opt/homeserver}"
+EXCLUDES="${EXCLUDES:-uptime-kuma etc-pihole}"
+keydir=/etc/homeserver/backup
+ssh_cmd="ssh -p ${PORT:-2222} -i $keydir/id_ed25519 -o BatchMode=yes -o UserKnownHostsFile=$keydir/known_hosts -o StrictHostKeyChecking=yes"
+snap=/var/backups/homeserver
+day=$(date +%F)
+install -d -m 700 "$snap"
+
+# A receiver that sleeps when idle (thor-sleep) is woken first; thor-sleep counts rsync as work, so it stays up.
+host=${DEST#*@}
+port_open() { timeout 3 bash -c ': </dev/tcp/$1/$2' port_open "$host" "${PORT:-2222}" 2>/dev/null; }
+if [ -n "${WAKE_MAC:-}" ] && ! port_open; then
+  python3 - "$WAKE_MAC" "${WAKE_BROADCAST:-}" <<'WOL'
+import socket, sys
+mac = bytes.fromhex(sys.argv[1].replace(":", "").replace("-", ""))
+assert len(mac) == 6, "WAKE_MAC must be six bytes, e.g. aa:bb:cc:dd:ee:ff"
+with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+    s.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+    for a in {sys.argv[2] or "255.255.255.255", "255.255.255.255"}:
+        s.sendto(b"\xff" * 6 + mac * 16, (a, 9))
+WOL
+  echo "backup-push: sent Wake-on-LAN to $host, waiting for port ${PORT:-2222}"
+  for _ in $(seq 36); do port_open && break; sleep 5; done
+  port_open || { echo "backup-push: $host did not wake up within 3 minutes" >&2; exit 1; }
+fi
+
+# Consistent snapshots of live SQLite databases (a plain file copy of a busy DB can be torn).
+while IFS= read -r db; do
+  name=$(echo "${db#/}" | tr '/' '_')
+  python3 - "$db" "$snap/$name-$day" <<'PY'
+import sqlite3, sys
+src = sqlite3.connect(f"file:{sys.argv[1]}?mode=ro", uri=True)
+dst = sqlite3.connect(sys.argv[2]); src.backup(dst); dst.close(); src.close()
+PY
+done < <(find /opt/homeserver -name '*.db' -size +0 -path '*kuma*' 2>/dev/null)
+# Pi-hole: its own export ("teleporter") if the container runs
+if docker ps --format '{{.Names}}' 2>/dev/null | grep -qx pihole; then
+  docker exec pihole sh -c 'rm -f /tmp/pi-hole_*teleporter*.zip; cd /tmp && pihole-FTL --teleporter >/dev/null'
+  f=$(docker exec pihole sh -c 'ls /tmp/pi-hole_*teleporter*.zip' 2>/dev/null | head -n1 || true)
+  if [ -n "$f" ]; then docker cp "pihole:$f" "$snap/pihole-teleporter-$day.zip" >/dev/null; fi
+fi
+find "$snap" -type f -mtime +7 -delete   # local snapshots: one week; the receiver keeps everything
+
+ex=()
+for e in $EXCLUDES; do ex+=(--exclude "$e"); done
+for src in $SOURCES; do
+  [ -e "$src" ] || continue
+  rsync -a --mkpath -e "$ssh_cmd" "${ex[@]}" "$src/" "$DEST:$day/$(echo "${src#/}" | tr / _)/"   # -> 2026-10-09/opt_homeserver/
+done
+rsync -a -e "$ssh_cmd" "$snap/" "$DEST:snapshots/"   # dated names; files already there are kept as they are
+echo "backup-push ok $(date -Is)"

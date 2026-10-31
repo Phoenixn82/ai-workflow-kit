@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# On loki: drive the loki-desk VM's screen with xdotool.
+#   desk-gui mousemove 640 400 click 1      desk-gui type 'hello'      desk-gui key ctrl+l
+set -euo pipefail
+[ $# -gt 0 ] || { sed -n 2,3p "$0"; exit 2; }
+ssh loki-desk "DISPLAY=:0 xdotool $(printf '%q ' "$@")"

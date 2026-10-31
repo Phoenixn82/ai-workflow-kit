@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>web handoff</title>
+<style>
+  :root { --bg: #f6f6f4; --fg: #1b1b1b; --muted: #666; --line: #d4d4d0; --field: #fff; --accent: #2457c5; --accent-fg: #fff; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #151515; --fg: #ececec; --muted: #9a9a9a; --line: #3a3a3a; --field: #222; --accent: #5b8cff; --accent-fg: #0b0b0b; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.4 system-ui, -apple-system, sans-serif; }
+  header { padding: 10px 12px 6px; }
+  #reason { font-weight: 600; overflow-wrap: anywhere; }
+  #state { color: var(--muted); font-size: 13px; overflow-wrap: anywhere; }
+  #view { display: block; width: 100%; height: auto; background: #000; touch-action: pinch-zoom; }
+  .bar { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 12px 0; }
+  .bar input { flex: 1 1 140px; min-width: 0; font-size: 16px; padding: 9px 10px; border: 1px solid var(--line);
+               border-radius: 8px; background: var(--field); color: var(--fg); }
+  button { font: inherit; padding: 9px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--field);
+           color: var(--fg); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); font-weight: 600; }
+  footer { padding: 10px 12px 18px; color: var(--muted); font-size: 13px; }
+</style>
+</head>
+<body>
+<header>
+  <div id="reason"></div>
+  <div id="state">connecting…</div>
+</header>
+<canvas id="view" width="1280" height="720" aria-label="live view of the browser; tap to click"></canvas>
+<div class="bar">
+  <input id="text" type="password" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false"
+         placeholder="text to type into the page" aria-label="text to type">
+  <button id="show" type="button" aria-pressed="false">Show</button>
+  <button id="type" type="button" class="primary">Type</button>
+</div>
+<div class="bar">
+  <button type="button" data-key="Enter">Enter</button>
+  <button type="button" data-key="Tab">Tab</button>
+  <button type="button" data-key="Backspace" aria-label="Backspace">⌫</button>
+  <button type="button" data-scroll="-400">Scroll ▲</button>
+  <button type="button" data-scroll="400">Scroll ▼</button>
+</div>
+<footer>Tap the page to click. Pinch to zoom. Typing goes into whatever field is focused on the page.
+  Automation picks up on its own once this step is done; then you can close this tab.</footer>
+<script type="application/json" id="reason-data">__REASON_JSON__</script>
+<script>
+"use strict";
+const canvas = document.getElementById("view");
+const ctx = canvas.getContext("2d");
+const state = document.getElementById("state");
+const text = document.getElementById("text");
+document.getElementById("reason").textContent = JSON.parse(document.getElementById("reason-data").textContent);
+
+const KEYS = {
+  Enter: { code: "Enter", windowsVirtualKeyCode: 13, text: "\r" },
+  Tab: { code: "Tab", windowsVirtualKeyCode: 9 },
+  Backspace: { code: "Backspace", windowsVirtualKeyCode: 8 },
+};
+let ws = null;
+let pressed = false;
+
+function send(msg) {
+  if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg));
+}
+
+function connect() {
+  const scheme = location.protocol === "https:" ? "wss://" : "ws://";
+  ws = new WebSocket(scheme + location.host + location.pathname.replace(/\/$/, "") + "/ws");
+  ws.onopen = () => { state.textContent = "live"; };
+  ws.onclose = () => { state.textContent = "disconnected: the handoff has ended or this link has expired"; };
+  ws.onmessage = (ev) => {
+    let msg;
+    try { msg = JSON.parse(ev.data); } catch { return; }
+    if (msg.type !== "frame") return;
+    const img = new Image();
+    const ack = () => send({ type: "ack", seq: msg.seq });   // the browser sends the next frame once this one is acked
+    img.onload = () => {
+      if (canvas.width !== img.naturalWidth || canvas.height !== img.naturalHeight) {
+        canvas.width = img.naturalWidth;
+        canvas.height = img.naturalHeight;
+      }
+      ctx.drawImage(img, 0, 0);
+      ack();
+    };
+    img.onerror = ack;   // never stall the stream on one bad frame
+    img.src = "data:image/jpeg;base64," + msg.data;
+  };
+}
+
+// Tap position -> page CSS px. web streams frames unscaled (a frame pixel is a CSS pixel), so the canvas, sized to
+// the frame, is the page's coordinate space.
+function point(ev) {
+  const r = canvas.getBoundingClientRect();
+  return {
+    x: Math.round((ev.clientX - r.left) / r.width * canvas.width),
+    y: Math.round((ev.clientY - r.top) / r.height * canvas.height),
+  };
+}
+
+function mouse(eventType, ev, extra) {
+  send(Object.assign({ type: "input_mouse", eventType, button: "left", clickCount: 1 }, point(ev), extra || {}));
+}
+
+canvas.addEventListener("pointerdown", (ev) => {
+  pressed = true;
+  canvas.setPointerCapture(ev.pointerId);
+  mouse("mouseMoved", ev, { button: "none", clickCount: 0 });
+  mouse("mousePressed", ev);
+  ev.preventDefault();
+});
+canvas.addEventListener("pointermove", (ev) => {
+  if (pressed) mouse("mouseMoved", ev, { clickCount: 0 });   // a drag with the button held
+});
+canvas.addEventListener("pointerup", (ev) => {
+  if (!pressed) return;
+  pressed = false;
+  mouse("mouseReleased", ev);
+});
+canvas.addEventListener("pointercancel", () => { pressed = false; });
+canvas.addEventListener("wheel", (ev) => {
+  ev.preventDefault();
+  send(Object.assign({ type: "input_mouse", eventType: "mouseWheel", deltaX: ev.deltaX, deltaY: ev.deltaY }, point(ev)));
+}, { passive: false });
+
+function key(name, extra) {
+  const base = Object.assign({ type: "input_keyboard", key: name }, extra || {});
+  send(Object.assign({}, base, { eventType: "keyDown" }));
+  send(Object.assign({}, base, { eventType: "keyUp", text: undefined }));
+}
+
+function typeText() {
+  if (text.value) send({ type: "input_text", text: text.value });   // inserted into the focused field as typed text
+  text.value = "";
+}
+
+document.getElementById("type").addEventListener("click", typeText);
+text.addEventListener("keydown", (ev) => {
+  if (ev.key === "Enter") { ev.preventDefault(); typeText(); }
+});
+document.getElementById("show").addEventListener("click", (ev) => {
+  const shown = text.type === "text";
+  text.type = shown ? "password" : "text";
+  ev.currentTarget.textContent = shown ? "Show" : "Hide";
+  ev.currentTarget.setAttribute("aria-pressed", String(!shown));
+});
+for (const b of document.querySelectorAll("[data-key]")) {
+  b.addEventListener("click", () => key(b.dataset.key, KEYS[b.dataset.key]));
+}
+for (const b of document.querySelectorAll("[data-scroll]")) {
+  b.addEventListener("click", () => send({
+    type: "input_mouse", eventType: "mouseWheel", deltaX: 0, deltaY: Number(b.dataset.scroll),
+    x: Math.round(canvas.width / 2), y: Math.round(canvas.height / 2),
+  }));
+}
+
+connect();
+</script>
+</body>
+</html>

@@ -1,0 +1,53 @@
+# ---- quarantined-box Hermes (from ai-workflow-kit examples/hermes-loki) ----
+# Append to ~/.hermes/config.yaml on the box, after setting model.default and model.provider (see docs/hermes.md).
+# Model calls go to 127.0.0.1:3002, which exists only while aihermes-loki's reverse tunnel is open:
+# box 127.0.0.1:3002 -> cockpit loki-llm-gate :3006 (/v1 only) -> thor-wake-proxy :3002 -> the router.
+# Pools come from lanes chains.yaml, public tier: the box holds nothing private, so any free provider may serve it.
+# Every model is declared at 65536 tokens; raise one only after a long-context recall test passes on its whole pool.
+providers:
+  freellm:
+    api: http://127.0.0.1:3002/v1
+    key_cmd: "cat ~/.config/hermes-loki/router.key"
+    transport: chat_completions
+    models:
+      auto:loki: {context_length: 65536}
+      auto:uncensored: {context_length: 65536}
+      auto:code: {context_length: 65536}
+      auto:public: {context_length: 65536}
+      auto:quick: {context_length: 65536}
+      auto:vision: {context_length: 65536}
+
+# The router falls through inside each pool; these catch a whole pool failing. No local GPU provider on purpose.
+fallback_providers:
+  - provider: custom:freellm
+    model: auto:public
+  - provider: custom:freellm
+    model: auto:code
+
+# /model <alias> switches pools mid-session, context kept.
+model_aliases:
+  loki: {provider: "custom:freellm", model: "auto:loki"}
+  uncensored: {provider: "custom:freellm", model: "auto:uncensored"}
+  code: {provider: "custom:freellm", model: "auto:code"}
+  public: {provider: "custom:freellm", model: "auto:public"}
+  quick: {provider: "custom:freellm", model: "auto:quick"}
+
+# Side jobs, pinned so the default "auto" can't pick something else. Compression and review use the main pool,
+# so a summary job doesn't refuse a conversation the main model accepted.
+auxiliary:
+  vision: {provider: freellm, model: "auto:vision", timeout: 120}
+  compression: {provider: freellm, model: "auto:loki"}
+  web_extract: {provider: freellm, model: "auto:quick"}
+  title_generation: {provider: freellm, model: "auto:quick"}
+  session_search: {provider: freellm, model: "auto:quick"}
+  curator: {provider: freellm, model: "auto:quick"}
+  background_review: {provider: freellm, model: "auto:loki"}
+
+# No AI opens a camera: copy of the kit's framework/harness/hooks/camera-guard.py.
+hooks:
+  pre_tool_call:
+    - matcher: ".*"
+      command: "~/.hermes/agent-hooks/camera-guard.py --exit2"
+      timeout: 10
+      fail_closed: true
+# ---- end quarantined-box Hermes ----

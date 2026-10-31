@@ -1,0 +1,11 @@
+[Unit]
+Description=loki-llm-gate: Loki Hermes reaches only the router's /v1 API (127.0.0.1:3006 -> thor-wake-proxy 3002)
+After=network-online.target
+
+[Service]
+ExecStart=%h/.local/bin/loki-llm-gate 3006 3002
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

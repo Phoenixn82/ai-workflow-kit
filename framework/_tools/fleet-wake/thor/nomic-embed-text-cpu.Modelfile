@@ -1,0 +1,15 @@
+# thor: nomic-embed-text:latest rebuilt CPU-only. Apply on thor:
+#   ollama create nomic-embed-text:latest -f nomic-embed-text-cpu.Modelfile
+# num_gpu 0 makes Ollama load it with no GPU layers and skip the VRAM fit check, so a vault-rag embed never
+# evicts the big model (needs OLLAMA_MAX_LOADED_MODELS >= 2, see override.conf). Same weights blob, so vectors
+# match the existing index. An `ollama pull nomic-embed-text` restores the GPU default: re-run the create.
+# num_thread 3: llama.cpp defaults to every core, and when a browser or a GPU model's spin thread holds a core or
+# two, every barrier waits on a descheduled thread. Three threads kept queries fast under load with identical
+# vectors; tune it to your CPU.
+# num_batch stays at Ollama's default (2048): a smaller batch (512) cut longer chunks off at 512 tokens.
+# FROM the pristine v1.5 tag, not from :latest, because FROM an existing model inherits its PARAMETERs and a
+# stale one (e.g. num_batch) would survive a re-create.
+# If v1.5 is missing: ollama pull nomic-embed-text:v1.5 (only the small config/params blobs download).
+FROM nomic-embed-text:v1.5
+PARAMETER num_gpu 0
+PARAMETER num_thread 3

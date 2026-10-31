@@ -1,0 +1,8 @@
+# /etc/fleet-scan/hosts: the boxes fleet-scan checks (root, chmod 600). One per line: name=user@address [port=N] [wake=MAC]
+# name: what the report calls it. user: the account whose authorized_keys holds the fleet-scan key.
+# address: tailnet name or address. port: that box's OpenSSH port if not PORT in fleet-scan.conf (2222).
+# wake: the box sleeps on purpose (thor): one Wake-on-LAN packet first, then up to 3 minutes for ssh.
+# Do not list heimdall itself: fleet-scan always checks the box it runs on.
+#thor=you@thor wake=XX:XX:XX:XX:XX:XX
+#odin=you@odin
+#raven=you@raven

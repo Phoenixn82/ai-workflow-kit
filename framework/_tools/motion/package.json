@@ -1,0 +1,14 @@
+{
+  "name": "motion-lane",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "motion": "bin/motion.mjs"
+  },
+  "dependencies": {
+    "playwright-core": "^1.63.0"
+  },
+  "scripts": {
+    "test": "test/smoke.sh"
+  }
+}

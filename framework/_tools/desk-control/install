@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+set -euo pipefail
+project_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+cd "$project_dir"
+export UV_PYTHON_INSTALL_DIR="$project_dir/.runtime"
+for executable in uv hyprctl grim qs wtype ydotool; do
+  command -v "$executable" >/dev/null || { echo "Missing desktop dependency: $executable" >&2; exit 1; }
+done
+uv python install 3.12.12
+uv sync --python 3.12.12 --frozen
+./launch doctor
+echo 'Installed. No agent session or desktop input has been started.'

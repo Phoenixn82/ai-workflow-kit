@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# Drive Loki's desktop: xdotool on the loki-desk VM's :0, run from odin.
+#   loki-gui mousemove 640 400 click 1      loki-gui type 'hello'      loki-gui key ctrl+l
+#   loki-gui search --name Chromium windowactivate
+set -euo pipefail
+[ $# -gt 0 ] || { sed -n 2,4p "$0"; exit 2; }
+ssh loki-desk "DISPLAY=:0 xdotool $(printf '%q ' "$@")"
